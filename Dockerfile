@@ -14,10 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application package
 COPY autodoist/ ./autodoist/
-COPY setup.py pyproject.toml ./
+COPY setup.py pyproject.toml README.md ./
 
-# Install the package
-RUN pip install --no-cache-dir -e .
+# Install the package (non-editable for production)
+RUN pip install --no-cache-dir .
 
 # Create writable directory for logs and database
 RUN mkdir -p /app/data && chown autodoist:autodoist /app/data
