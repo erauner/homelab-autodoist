@@ -29,7 +29,6 @@ Examples:
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
 from typing import Literal, Optional, Any, Protocol, TypeAlias
 
 
@@ -150,12 +149,12 @@ def expand_type_str(type_str: Optional[str], width: int = 3) -> Optional[str]:
 def pad_type_str_to_three(type_str: Optional[str]) -> Optional[str]:
     """
     Pad a type string with 'x' prefix to make it 3 characters.
-    
+
     This ensures consistent indexing:
       - Position 0: section-level behavior
-      - Position 1: parentless-task-level behavior  
+      - Position 1: parentless-task-level behavior
       - Position 2: subtask-level behavior
-    
+
     Examples:
       - 'sps' -> 'sps' (project type, already 3 chars)
       - 'sp' -> 'xsp' (section type, 2 chars)
@@ -163,7 +162,7 @@ def pad_type_str_to_three(type_str: Optional[str]) -> Optional[str]:
     """
     if type_str is None:
         return None
-    
+
     if len(type_str) >= 3:
         return type_str[:3]
     elif len(type_str) == 2:
@@ -172,19 +171,3 @@ def pad_type_str_to_three(type_str: Optional[str]) -> Optional[str]:
         return 'xx' + type_str
     else:
         return None
-
-
-@dataclass(frozen=True)
-class LabelChanges:
-    """Tracks label changes to be applied in a batch."""
-    
-    # task_id -> new full labels list
-    to_update: dict[str, list[str]]
-    # Count of add operations per task
-    add_count: dict[str, int]
-    # Count of remove operations per task
-    remove_count: dict[str, int]
-    
-    @classmethod
-    def empty(cls) -> "LabelChanges":
-        return cls(to_update={}, add_count={}, remove_count={})
