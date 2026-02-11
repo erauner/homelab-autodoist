@@ -87,9 +87,14 @@ def db_read_value(connection, model, column):
         elif isinstance(model, Section):
             db_name = 'sections'
             goal = 'section_id'
+        elif isinstance(model, NoSection):
+            # NoSection placeholder has no DB entry
+            return None
         elif isinstance(model, Project):
             db_name = 'projects'
             goal = 'project_id'
+        else:
+            return None
 
         query = "SELECT %s FROM %s where %s=%r" % (
             column, db_name, goal, model.id)
@@ -98,6 +103,7 @@ def db_read_value(connection, model, column):
 
     except Exception as e:
         logging.debug(f"The error '{e}' occurred")
+        return None
 
     return result
 
@@ -115,9 +121,16 @@ def db_update_value(connection, model, column, value):
             db_name = 'sections'
             goal = 'section_id'
 
+        elif isinstance(model, NoSection):
+            # NoSection placeholder has no DB entry
+            return None
+
         elif isinstance(model, Project):
             db_name = 'projects'
             goal = 'project_id'
+
+        else:
+            return None
 
         query = """UPDATE %s SET %s = ? WHERE %s = %r""" % (
             db_name, column, goal, model.id)
@@ -135,7 +148,10 @@ def db_update_value(connection, model, column, value):
 
 def db_check_existance(connection, model):
     try:
-        if isinstance(model, Task):
+        if isinstance(model, NoSection):
+            # NoSection placeholder has no DB entry
+            return
+        elif isinstance(model, Task):
             db_name = 'tasks'
             goal = 'task_id'
         elif isinstance(model, Section):
@@ -314,6 +330,18 @@ def get_attr_id(x):
     elif isinstance(x, dict):
         return x.get('id')
     return None
+
+
+# SDK v3.x Section class requires specific arguments, so we create a placeholder
+# for tasks that don't belong to any section (project-level tasks)
+class NoSection:
+    """Placeholder for tasks not in any section (SDK v3.x compatible)."""
+    def __init__(self, project_id):
+        self.id = None
+        self.name = None
+        self.project_id = project_id
+        self.is_collapsed = False
+        self.order = 0
 
 
 # Check if label exists, if not, create it
@@ -679,6 +707,12 @@ def get_type(args, connection, model, key):
         current_type = check_name(args, model.name, 2)  # Sections
     elif isinstance(model, Project):
         current_type = check_name(args, model.name, 3)  # Projects
+    elif isinstance(model, NoSection):
+        # NoSection placeholder - inherit from parent project or default to None
+        current_type = None
+    else:
+        # Unknown model type
+        current_type = None
 
     # Check if type changed with respect to previous run
     if old_type == current_type:
@@ -790,7 +824,10 @@ def check_header(api, model):
     regex_b = '(^\-\*\s*)(.*)'
 
     try:
-        if isinstance(model, Task):
+        if isinstance(model, NoSection):
+            # NoSection placeholder has no header to check
+            return api, header_all_in_level, unheader_all_in_level
+        elif isinstance(model, Task):
             ra = re.search(regex_a, model.content)
             rb = re.search(regex_b, model.content)
 
@@ -912,7 +949,7 @@ def check_regen_mode(api, item, regen_labels_id):
 
 def run_recurring_lists_logic(args, api, connection, task, task_items, task_items_all, regen_labels_id):
 
-    if task.parent_id == 0:
+    if not task.parent_id:  # SDK v3.x uses None for parentless tasks, not 0
         try:
             if task.due.is_recurring:
                 try:
@@ -1148,7 +1185,8 @@ def autodoist_magic(args, api, connection):
         # Get all sections and add the 'None' section too.
         try:
             sections = [s for s in all_sections if s.project_id == project.id]
-            sections.insert(0, Section(None, None, 0, project.id))
+            # Use NoSection placeholder for tasks not in any section (SDK v3.x compatible)
+            sections.insert(0, NoSection(project.id))
         except Exception as error:
             logging.debug(error)
 
@@ -1185,16 +1223,18 @@ def autodoist_magic(args, api, connection):
             section_tasks = [x for x in project_tasks if x.section_id
                              == section.id]
 
-            # Change top tasks parents_id from 'None' to '0' in order to numerically sort later on
+            # Change top tasks parents_id from None to '' (empty string) to sort parent-less tasks first
+            # SDK v3.x uses string IDs, not integers
             for task in section_tasks:
                 if not task.parent_id:
-                    task.parent_id = 0
+                    task.parent_id = ''
 
             # Sort by parent_id and child order
-            # In the past, Todoist used to screw up the tasks orders, so originally I processed parentless tasks first such that children could properly inherit porperties.
+            # Empty string sorts before any parent_id string, putting top-level tasks first
+            # In the past, Todoist used to screw up the tasks orders, so originally I processed parentless tasks first such that children could properly inherit properties.
             # With the new API this seems to be in order, but I'm keeping this just in case for now. TODO: Could be used for optimization in the future.
             section_tasks = sorted(section_tasks, key=lambda x: (
-                int(x.parent_id), x.order))
+                str(x.parent_id) if x.parent_id else '', x.order))
 
             # If a type has changed, clean all tasks in this section for good measure
             if next_action_label is not None:
@@ -1313,7 +1353,7 @@ def autodoist_magic(args, api, connection):
                         db_update_value(connection, task, 'parent_type', None)
 
                     # If it is a parentless task, set task type based on hierarchy
-                    if task.parent_id == 0:
+                    if not task.parent_id:  # SDK v3.x uses None for parentless tasks, not 0
                         if not True in hierarchy_boolean:
                             # Parentless task has no type, so skip any children.
                             continue
@@ -1397,12 +1437,12 @@ def autodoist_magic(args, api, connection):
                     if len(child_tasks) > 0:
 
                         # If it is a sub-task with no own type, inherit the parent task type instead
-                        if task.parent_id != 0 and task_type == None:
+                        if task.parent_id and task_type == None:  # SDK v3.x: parent_id is truthy if subtask
                             dominant_type = db_read_value(
                                 connection, task, 'parent_type')[0][0]
 
                         # If it is a sub-task with no dominant type (e.g. lower level child with new task_type), use the task type
-                        if task.parent_id != 0 and dominant_type == None:
+                        if task.parent_id and dominant_type == None:  # SDK v3.x: parent_id is truthy if subtask
                             dominant_type = task_type
 
                         if dominant_type is None:
