@@ -4,7 +4,6 @@ from todoist_api_python.api import TodoistAPI
 from todoist_api_python.models import Task
 from todoist_api_python.models import Section
 from todoist_api_python.models import Project
-from todoist_api_python.http_requests import get
 from urllib.parse import urljoin
 from urllib.parse import quote
 import sys
@@ -444,13 +443,17 @@ def check_for_update(current_version):
 
 def get_all_data(api):
     # Updated to new v1 API endpoint (v9 was deprecated)
-    BASE_URL = "https://api.todoist.com"
-    SYNC_API = urljoin(BASE_URL, "/api/v1/")
-    COMPLETED_GET_ALL = "completed/get_all"
-    endpoint = urljoin(SYNC_API, COMPLETED_GET_ALL)
-    data = get(api._session, endpoint, api._token)
-
-    return data
+    endpoint = "https://api.todoist.com/api/v1/completed/get_all"
+    headers = {
+        'Authorization': f'Bearer {api._token}',
+    }
+    try:
+        response = requests.get(endpoint, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logging.error(f"Error fetching completed data: {e}")
+        return {}
 
 
 def initialise_sync_api(api):
