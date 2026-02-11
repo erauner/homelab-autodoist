@@ -3,17 +3,22 @@ FROM python:3.11-slim
 LABEL org.opencontainers.image.source="https://github.com/erauner/homelab-autodoist"
 LABEL org.opencontainers.image.description="Autodoist - GTD automation for Todoist"
 
+# Create non-root user first
+RUN useradd -r -u 1000 -m autodoist
+
 WORKDIR /app
 
 # Install dependencies first for better caching
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
-COPY autodoist.py ./
+# Copy application and set ownership
+COPY --chown=autodoist:autodoist autodoist.py ./
 
-# Run as non-root user
-RUN useradd -r -u 1000 autodoist
+# Create writable directory for logs
+RUN mkdir -p /app/data && chown autodoist:autodoist /app/data
+
 USER autodoist
+WORKDIR /app/data
 
-ENTRYPOINT ["python", "autodoist.py"]
+ENTRYPOINT ["python", "/app/autodoist.py"]
