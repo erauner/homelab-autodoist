@@ -465,10 +465,24 @@ def initialise_sync_api(api):
     try:
         response = requests.post(
             'https://api.todoist.com/sync/v9/sync', headers=headers, data=data)
+        response.raise_for_status()  # Raise exception for 4xx/5xx status codes
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP error during initialise_sync_api: {e}")
+        logging.error(f"Response: {response.text}")
+        raise
     except Exception as e:
         logging.error(f"Error during initialise_sync_api: '{e}'")
+        raise
 
-    return json.loads(response.text)
+    result = json.loads(response.text)
+
+    # Validate response contains required fields
+    if 'sync_token' not in result:
+        logging.error(f"Unexpected API response - missing sync_token. Response keys: {list(result.keys())}")
+        logging.error(f"Full response: {response.text[:500]}")
+        raise KeyError("sync_token not found in API response")
+
+    return result
 
 # Commit task content change to queue
 
