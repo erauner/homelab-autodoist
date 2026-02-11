@@ -376,7 +376,7 @@ def initialise_api(args):
     try:
         api_arguments = {'token': args.api_key}
         api = TodoistAPI(**api_arguments)
-        sync_api = initialise_sync_api(api)
+        sync_api = initialise_sync_api(api, args.api_key)
         # Save SYNC API token to enable partial syncs
         api.sync_token = sync_api['sync_token']
 
@@ -441,11 +441,11 @@ def check_for_update(current_version):
 # Get all data through the SYNC API. Needed to see e.g. any completed tasks.
 
 
-def get_all_data(api):
+def get_all_data(api, api_token):
     # Updated to new v1 API endpoint (v9 was deprecated)
     endpoint = "https://api.todoist.com/api/v1/completed/get_all"
     headers = {
-        'Authorization': f'Bearer {api._token}',
+        'Authorization': f'Bearer {api_token}',
     }
     try:
         response = requests.get(endpoint, headers=headers)
@@ -456,8 +456,8 @@ def get_all_data(api):
         return {}
 
 
-def initialise_sync_api(api):
-    bearer_token = 'Bearer %s' % api._token
+def initialise_sync_api(api, api_token):
+    bearer_token = 'Bearer %s' % api_token
 
     headers = {
         'Authorization': bearer_token,
@@ -539,7 +539,7 @@ def commit_labels_update(api, overview_task_ids, overview_task_labels):
 # Update tasks in batch with Todoist Sync API
 
 
-def sync(api):
+def sync(api, api_token):
     # # This approach does not seem to work correctly.
     # BASE_URL = "https://api.todoist.com"
     # SYNC_VERSION = "v9"
@@ -549,7 +549,7 @@ def sync(api):
     # task_data = post(api._session, endpoint, api._token, data=data)
 
     try:
-        bearer_token = 'Bearer %s' % api._token
+        bearer_token = 'Bearer %s' % api_token
 
         headers = {
             'Authorization': bearer_token,
@@ -1623,7 +1623,7 @@ def main():
 
         # Sync all queued up changes
         if api.queue:
-            sync(api)
+            sync(api, args.api_key)
 
         num_changes = len(api.queue)+len(api.overview_updated_ids)
 
