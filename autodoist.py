@@ -281,10 +281,26 @@ def query_yes_no(question, default="yes"):
 def verify_label_existance(api, label_name, prompt_mode):
     # Check the regeneration label exists
     labels = api.get_labels()
-    label = [x for x in labels if x.name == label_name]
+
+    # Handle different SDK versions - SDK v3.x may return objects or dicts
+    def get_label_name(x):
+        if hasattr(x, 'name'):
+            return x.name
+        elif isinstance(x, dict):
+            return x.get('name')
+        return None
+
+    def get_label_id(x):
+        if hasattr(x, 'id'):
+            return x.id
+        elif isinstance(x, dict):
+            return x.get('id')
+        return None
+
+    label = [x for x in labels if get_label_name(x) == label_name]
 
     if len(label) > 0:
-        next_action_label = label[0].id
+        next_action_label = get_label_id(label[0])
         logging.debug('Label \'%s\' found as label id %s',
                       label_name, next_action_label)
     else:
@@ -305,8 +321,8 @@ def verify_label_existance(api, label_name, prompt_mode):
                 logging.warning(error)
 
             labels = api.get_labels()
-            label = [x for x in labels if x.name == label_name]
-            next_action_label = label[0].id
+            label = [x for x in labels if get_label_name(x) == label_name]
+            next_action_label = get_label_id(label[0])
 
             logging.info("Label '{}' has been created!".format(label_name))
         else:
