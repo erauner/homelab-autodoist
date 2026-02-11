@@ -12,13 +12,14 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application and set ownership
-COPY --chown=autodoist:autodoist autodoist.py ./
+# Copy application package and set ownership
+COPY --chown=autodoist:autodoist autodoist/ ./autodoist/
+COPY --chown=autodoist:autodoist setup.py ./
 
-# Create writable directory for logs
+# Create writable directory for logs and database
 RUN mkdir -p /app/data && chown autodoist:autodoist /app/data
 
 USER autodoist
 WORKDIR /app/data
 
-ENTRYPOINT ["python", "/app/autodoist.py"]
+ENTRYPOINT ["python", "-m", "autodoist"]

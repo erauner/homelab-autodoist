@@ -1,16 +1,38 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='autodoist',
-    version='2.0',
-    py_modules=['autodoist'],
+    version='2.0.0',
+    packages=find_packages(exclude=['tests', 'tests.*']),
     url='https://github.com/Hoffelhas/automation-todoist',
     license='MIT',
     author='Alexander Haselhoff',
     author_email='xela@live.nl',
-    description='Added functionality for Todoist: 1) next-action labels, 2) sub-task regeneration, 3) postpone end of day, and 4) (un)header items simultaneously)',
+    description='GTD automation for Todoist: automatic next-action labeling',
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
+    python_requires='>=3.9',
     install_requires=[
-        'todoist-python',
-        'requests',
-    ]
+        'todoist-api-python>=3.0.0',
+        'requests>=2.28.1',
+    ],
+    extras_require={
+        'dev': [
+            'pytest>=7.0.0',
+        ],
+    },
+    entry_points={
+        'console_scripts': [
+            'autodoist=autodoist.__main__:main',
+        ],
+    },
+    classifiers=[
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: End Users/Desktop',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+    ],
 )

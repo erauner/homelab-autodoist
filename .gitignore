@@ -62,3 +62,14 @@ target/
 # VSCODE
 .json
 .vscode
+
+# SQLite database
+metadata.sqlite
+*.sqlite
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock
