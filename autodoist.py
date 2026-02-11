@@ -275,32 +275,58 @@ def query_yes_no(question, default="yes"):
             sys.stdout.write("Please respond with 'yes' or 'no' "
                              "(or 'y' or 'n').\n")
 
+# Helper to flatten SDK v3.x ResultsPaginator into a list
+def flatten_paginator(paginator):
+    """
+    SDK v3.x returns ResultsPaginator objects instead of lists.
+    Iterating over a paginator yields pages (lists of items).
+    This function flattens all pages into a single list.
+    """
+    result = []
+    try:
+        for page in paginator:
+            if isinstance(page, list):
+                result.extend(page)
+            else:
+                # Single item or different format
+                result.append(page)
+    except TypeError:
+        # Not iterable, return as-is wrapped in list
+        if paginator is not None:
+            result = [paginator] if not isinstance(paginator, list) else paginator
+    return result
+
+
+# Helper functions to safely access label/project/task attributes
+def get_attr_name(x):
+    """Get name from object or dict."""
+    if hasattr(x, 'name'):
+        return x.name
+    elif isinstance(x, dict):
+        return x.get('name')
+    return None
+
+
+def get_attr_id(x):
+    """Get id from object or dict."""
+    if hasattr(x, 'id'):
+        return x.id
+    elif isinstance(x, dict):
+        return x.get('id')
+    return None
+
+
 # Check if label exists, if not, create it
 
 
 def verify_label_existance(api, label_name, prompt_mode):
     # Check the regeneration label exists
-    labels = api.get_labels()
+    labels = flatten_paginator(api.get_labels())
 
-    # Handle different SDK versions - SDK v3.x may return objects or dicts
-    def get_label_name(x):
-        if hasattr(x, 'name'):
-            return x.name
-        elif isinstance(x, dict):
-            return x.get('name')
-        return None
-
-    def get_label_id(x):
-        if hasattr(x, 'id'):
-            return x.id
-        elif isinstance(x, dict):
-            return x.get('id')
-        return None
-
-    label = [x for x in labels if get_label_name(x) == label_name]
+    label = [x for x in labels if get_attr_name(x) == label_name]
 
     if len(label) > 0:
-        next_action_label = get_label_id(label[0])
+        next_action_label = get_attr_id(label[0])
         logging.debug('Label \'%s\' found as label id %s',
                       label_name, next_action_label)
     else:
@@ -320,9 +346,9 @@ def verify_label_existance(api, label_name, prompt_mode):
             except Exception as error:
                 logging.warning(error)
 
-            labels = api.get_labels()
-            label = [x for x in labels if get_label_name(x) == label_name]
-            next_action_label = get_label_id(label[0])
+            labels = flatten_paginator(api.get_labels())
+            label = [x for x in labels if get_attr_name(x) == label_name]
+            next_action_label = get_attr_id(label[0])
 
             logging.info("Label '{}' has been created!".format(label_name))
         else:
@@ -1064,9 +1090,10 @@ def autodoist_magic(args, api, connection):
 
     # Get all todoist info
     try:
-        all_projects = api.get_projects()  # To save on request to stay under the limit
-        all_sections = api.get_sections()  # To save on request to stay under the limit
-        all_tasks = api.get_tasks()
+        # SDK v3.x returns ResultsPaginator, need to flatten to list
+        all_projects = flatten_paginator(api.get_projects())
+        all_sections = flatten_paginator(api.get_sections())
+        all_tasks = flatten_paginator(api.get_tasks())
 
     except Exception as error:
         logging.error(error)
