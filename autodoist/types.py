@@ -106,7 +106,12 @@ def normalize_parent_id(parent_id: Optional[str]) -> str:
 
 
 def is_parentless(parent_id: Optional[str]) -> bool:
-    """Check if a task is parentless (top-level in section)."""
+    """
+    Check if a task is parentless (top-level in section).
+
+    Handles both SDK v3.x behavior (None for parentless) and the normalized
+    form used in labeling ('' empty string for sorting). Both are falsy.
+    """
     return not parent_id
 
 

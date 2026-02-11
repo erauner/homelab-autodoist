@@ -20,14 +20,14 @@ from .types import get_attr_name, get_attr_id
 if TYPE_CHECKING:
     pass
 
-# Re-export helpers for backwards compatibility
 __all__ = [
     'flatten_paginator',
-    'get_attr_name',
-    'get_attr_id',
     'initialise_sync_api',
     'verify_label_existance',
     'TodoistClient',
+    # Re-exported from .types for convenience (canonical import is from .types)
+    'get_attr_name',
+    'get_attr_id',
 ]
 
 

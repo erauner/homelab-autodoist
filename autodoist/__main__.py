@@ -84,19 +84,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             
             # Run labeling pass
             label_changes = run_labeling_pass(client, db, config)
-            
+
             # Flush queued changes
             if client.pending_changes > 0:
                 try:
                     num_changes = client.flush_queue()
-                    if num_changes == 1:
-                        logging.info("%d change committed to Todoist.", num_changes)
-                    else:
-                        logging.info("%d changes committed to Todoist.", num_changes)
+                    logging.info(
+                        "%d change%s committed to Todoist (%d label update%s).",
+                        num_changes, "" if num_changes == 1 else "s",
+                        label_changes, "" if label_changes == 1 else "s"
+                    )
                 except Exception as e:
                     logging.error("Error syncing changes: %s", e)
             else:
-                logging.info("No changes in queue, skipping sync.")
+                logging.debug("No changes in queue, skipping sync.")
             
             # Exit if one-time mode
             if config.onetime:

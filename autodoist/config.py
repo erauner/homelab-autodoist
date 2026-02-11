@@ -62,13 +62,14 @@ class Config:
             )
             sys.exit(1)
         
+        # CLI args take precedence over env vars (None means not provided)
         return cls(
             api_key=api_key,
-            label=args.label or os.environ.get('AUTODOIST_LABEL'),
-            delay=args.delay if args.delay != 5 else int(os.environ.get('AUTODOIST_DELAY', '5')),
-            p_suffix=args.p_suffix if args.p_suffix != '=' else os.environ.get('AUTODOIST_P_SUFFIX', '='),
-            s_suffix=args.s_suffix if args.s_suffix != '-' else os.environ.get('AUTODOIST_S_SUFFIX', '-'),
-            hide_future=args.hide_future if args.hide_future != 0 else int(os.environ.get('AUTODOIST_HIDE_FUTURE', '0')),
+            label=args.label if args.label is not None else os.environ.get('AUTODOIST_LABEL'),
+            delay=args.delay if args.delay is not None else int(os.environ.get('AUTODOIST_DELAY', '5')),
+            p_suffix=args.p_suffix if args.p_suffix is not None else os.environ.get('AUTODOIST_P_SUFFIX', '='),
+            s_suffix=args.s_suffix if args.s_suffix is not None else os.environ.get('AUTODOIST_S_SUFFIX', '-'),
+            hide_future=args.hide_future if args.hide_future is not None else int(os.environ.get('AUTODOIST_HIDE_FUTURE', '0')),
             onetime=args.onetime or bool(os.environ.get('AUTODOIST_ONETIME')),
             debug=args.debug or bool(os.environ.get('AUTODOIST_DEBUG')),
             inbox=args.inbox,
@@ -108,23 +109,23 @@ def _create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '-d', '--delay',
         help='Delay in seconds between syncs (default: 5)',
-        default=5,
+        default=None,
         type=int
     )
     parser.add_argument(
         '-p', '--p_suffix',
         help='Suffix for parallel labeling (default: "=")',
-        default='='
+        default=None
     )
     parser.add_argument(
         '-s', '--s_suffix',
         help='Suffix for sequential labeling (default: "-")',
-        default='-'
+        default=None
     )
     parser.add_argument(
         '-hf', '--hide_future',
         help='Hide tasks with due dates beyond this many days',
-        default=0,
+        default=None,
         type=int
     )
     parser.add_argument(

@@ -54,20 +54,25 @@ SELECT 'task', CAST(task_id AS TEXT), task_type, parent_type FROM tasks;
 class MetadataDB:
     """
     SQLite database for storing entity metadata.
-    
+
     Tracks type_str for projects/sections/tasks and parent_type for tasks.
     This allows detecting when a user changes the type suffix on an entity,
     triggering cleanup of stale labels.
+
+    Supports batched writes: set auto_commit=False and call commit() manually
+    to avoid per-operation commits (better performance for large accounts).
     """
-    
-    def __init__(self, db_path: str = "metadata.sqlite") -> None:
+
+    def __init__(self, db_path: str = "metadata.sqlite", auto_commit: bool = False) -> None:
         """
         Open or create the metadata database.
-        
+
         Args:
             db_path: Path to SQLite database file
+            auto_commit: If False, batch writes until commit() is called
         """
         self.db_path = db_path
+        self.auto_commit = auto_commit
         self._conn: Optional[sqlite3.Connection] = None
     
     def connect(self) -> None:
@@ -96,6 +101,11 @@ class MetadataDB:
         if self._conn is None:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._conn
+
+    def commit(self) -> None:
+        """Commit pending changes to the database."""
+        if self._conn:
+            self._conn.commit()
     
     def _init_schema(self) -> None:
         """Create tables if they don't exist."""
@@ -154,7 +164,7 @@ class MetadataDB:
     def ensure_entity(self, kind: "EntityKind", entity_id: str) -> None:
         """
         Ensure an entity exists in the database.
-        
+
         Creates a new row if the entity doesn't exist.
         """
         cursor = self.conn.cursor()
@@ -162,7 +172,8 @@ class MetadataDB:
             "INSERT OR IGNORE INTO entities (entity_kind, entity_id) VALUES (?, ?)",
             (kind, str(entity_id))
         )
-        self.conn.commit()
+        if self.auto_commit:
+            self.conn.commit()
     
     def get_type_str(self, kind: "EntityKind", entity_id: str) -> Optional[str]:
         """
@@ -181,7 +192,7 @@ class MetadataDB:
     def set_type_str(self, kind: "EntityKind", entity_id: str, type_str: Optional[str]) -> None:
         """
         Set the type_str for an entity.
-        
+
         Creates the entity if it doesn't exist.
         """
         cursor = self.conn.cursor()
@@ -193,7 +204,8 @@ class MetadataDB:
             """,
             (kind, str(entity_id), type_str, type_str)
         )
-        self.conn.commit()
+        if self.auto_commit:
+            self.conn.commit()
     
     def get_parent_type(self, task_id: str) -> Optional[str]:
         """
@@ -213,7 +225,7 @@ class MetadataDB:
     def set_parent_type(self, task_id: str, parent_type: Optional[str]) -> None:
         """
         Set the parent_type for a task.
-        
+
         Creates the entity if it doesn't exist.
         """
         cursor = self.conn.cursor()
@@ -225,20 +237,22 @@ class MetadataDB:
             """,
             (str(task_id), parent_type, parent_type)
         )
-        self.conn.commit()
+        if self.auto_commit:
+            self.conn.commit()
     
     def clear_task_types(self, task_id: str) -> None:
         """Clear both type_str and parent_type for a task."""
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            UPDATE entities 
-            SET type_str = NULL, parent_type = NULL 
+            UPDATE entities
+            SET type_str = NULL, parent_type = NULL
             WHERE entity_kind = 'task' AND entity_id = ?
             """,
             (str(task_id),)
         )
-        self.conn.commit()
+        if self.auto_commit:
+            self.conn.commit()
 
 
 def open_db(db_path: str = "metadata.sqlite") -> MetadataDB:

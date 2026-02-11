@@ -146,8 +146,14 @@ def resolve_dominant_type(
 
 
 def is_header_task(content: str) -> bool:
-    """Check if a task is a header (starts with '* ')."""
-    return content.startswith('* ') or content.startswith('*\t')
+    """
+    Check if a task is a header (starts with '*').
+
+    Todoist uses '* ' prefix to make tasks uncheckable (headers).
+    We also treat any task starting with '*' as a header to match
+    the original behavior and avoid labeling tasks like '*important'.
+    """
+    return content.startswith('*')
 
 
 def is_section_disabled(section: Section | NoSection) -> bool:
@@ -215,11 +221,11 @@ def check_header_command(model: Any) -> tuple[bool, bool, Optional[str]]:
 class LabelingEngine:
     """
     Orchestrates the labeling pass over all projects/sections/tasks.
-    
+
     This class encapsulates the main labeling algorithm, tracking
     label changes to be applied in a batch.
     """
-    
+
     def __init__(
         self,
         client: "TodoistClient",
@@ -229,13 +235,15 @@ class LabelingEngine:
         self.client = client
         self.db = db
         self.config = config
-        
-        # Track label changes: task_id -> count of changes (+1 for add, -1 for remove)
-        self.task_change_counts: dict[str, int] = {}
-        # Track final labels: task_id -> list of labels
-        self.task_labels: dict[str, list[str]] = {}
-        # Track first-found flags: [section_found, parentless_found]
-        self._first_found: list[bool] = [False, False]
+
+        # Track original labels from SDK (frozen at first access)
+        self._original_labels: dict[str, list[str]] = {}
+        # Track desired final labels: task_id -> list of labels
+        self._desired_labels: dict[str, list[str]] = {}
+
+        # Track first-found flags for sequential labeling
+        self._section_found: bool = False
+        self._parentless_found: bool = False
     
     def run(self) -> int:
         """
@@ -262,15 +270,16 @@ class LabelingEngine:
             # Skip inbox
             if project.is_inbox_project:
                 continue
-            
+
             self._process_project(
                 project, all_sections, all_tasks, label
             )
-        
-        # Queue all label updates
-        self._commit_label_changes()
-        
-        return len([k for k, v in self.task_change_counts.items() if v != 0])
+
+        # Commit all DB changes batched during this pass
+        self.db.commit()
+
+        # Queue all label updates and return count
+        return self._commit_label_changes()
     
     def _process_project(
         self,
@@ -314,7 +323,7 @@ class LabelingEngine:
         sections.insert(0, NoSection(project.id))
         
         # Reset section-level first-found
-        self._first_found[0] = False
+        self._section_found = False
         
         for section in sections:
             self._process_section(
@@ -363,12 +372,14 @@ class LabelingEngine:
         
         # Get tasks for this section
         section_tasks = [t for t in project_tasks if t.section_id == section.id]
-        
-        # Normalize parent_id for sorting (None -> '' so parentless sort first)
+
+        # Normalize parent_id for sorting: SDK v3.x uses None for parentless tasks.
+        # We mutate to '' (empty string) so parentless tasks sort first.
+        # Note: is_parentless() handles both None and '' (both are falsy).
         for task in section_tasks:
             if not task.parent_id:
                 task.parent_id = ''
-        
+
         # Sort by parent_id then order
         section_tasks.sort(key=lambda t: (normalize_parent_id(t.parent_id), t.order))
         
@@ -379,7 +390,7 @@ class LabelingEngine:
                 self.db.clear_task_types(str(task.id))
         
         # Reset parentless first-found
-        self._first_found[1] = False
+        self._parentless_found = False
         
         # Get non-completed tasks for child lookups
         non_completed = [t for t in section_tasks if not t.is_completed]
@@ -393,8 +404,8 @@ class LabelingEngine:
             )
         
         # Mark section as found if it had tasks
-        if section_tasks and not self._first_found[0]:
-            self._first_found[0] = True
+        if section_tasks and not self._section_found:
+            self._section_found = True
     
     def _process_task(
         self,
@@ -494,8 +505,8 @@ class LabelingEngine:
         self._apply_hide_future(task, child_tasks, label)
         
         # Mark as first found
-        if not self._first_found[1]:
-            self._first_found[1] = True
+        if not self._parentless_found:
+            self._parentless_found = True
     
     def _label_parentless_task(
         self,
@@ -517,10 +528,10 @@ class LabelingEngine:
         
         if section_mode == 's':
             # Sequential sections: only label in first section
-            if not self._first_found[0]:
+            if not self._section_found:
                 if parentless_mode == 's':
                     # Sequential parentless: only first task
-                    if not self._first_found[1]:
+                    if not self._parentless_found:
                         should_label = True
                 elif parentless_mode == 'p':
                     # Parallel parentless: all tasks
@@ -528,14 +539,14 @@ class LabelingEngine:
         elif section_mode == 'p':
             # Parallel sections: label in all sections
             if parentless_mode == 's':
-                if not self._first_found[1]:
+                if not self._parentless_found:
                     should_label = True
             elif parentless_mode == 'p':
                 should_label = True
         elif section_mode == 'x':
             # No section-level override, use parentless mode
             if parentless_mode == 's':
-                if not self._first_found[1]:
+                if not self._parentless_found:
                     should_label = True
             elif parentless_mode == 'p':
                 should_label = True
@@ -566,11 +577,12 @@ class LabelingEngine:
             # Subtask: inherit from parent or use own type
             if task_type is None:
                 # Try to inherit from DB-stored parent type
-                dominant_type = self.db.get_parent_type(str(task.id))
-                if dominant_type:
-                    # Stored as single char, pad it
-                    dominant_type = 'xx' + dominant_type
-            
+                stored_parent_type = self.db.get_parent_type(str(task.id))
+                if stored_parent_type:
+                    # Stored as single char ('s' or 'p'), pad it to 3 chars
+                    # Guard: only use first char in case of corruption
+                    dominant_type = 'xx' + stored_parent_type[0]
+
             if dominant_type is None:
                 dominant_type = task_type
         
@@ -701,36 +713,59 @@ class LabelingEngine:
             # Recurse to grandchildren
             self._headerify_children(child, section_tasks, header)
     
+    def _get_current_labels(self, task: Task) -> list[str]:
+        """
+        Get current desired labels for a task.
+
+        On first access, stores the original labels from the SDK.
+        Returns the tracked desired state, or original if not yet tracked.
+        """
+        task_id = str(task.id)
+
+        # Store original labels on first access
+        if task_id not in self._original_labels:
+            self._original_labels[task_id] = list(task.labels)
+
+        # Return desired state if tracked, otherwise original
+        return self._desired_labels.get(task_id, list(self._original_labels[task_id]))
+
     def _add_label(self, task: Task, label: str) -> None:
         """Track addition of a label to a task."""
-        if label not in task.labels:
+        task_id = str(task.id)
+        current = self._get_current_labels(task)
+
+        if label not in current:
             logging.debug("Adding label to '%s'", task.content)
-            
-            labels = list(task.labels)
-            labels.append(label)
-            
-            task_id = str(task.id)
-            self.task_change_counts[task_id] = self.task_change_counts.get(task_id, 0) + 1
-            self.task_labels[task_id] = labels
-    
+            current.append(label)
+            self._desired_labels[task_id] = current
+
     def _remove_label(self, task: Task, label: str) -> None:
         """Track removal of a label from a task."""
-        if label in task.labels:
+        task_id = str(task.id)
+        current = self._get_current_labels(task)
+
+        if label in current:
             logging.debug("Removing label from '%s'", task.content)
-            
-            labels = list(task.labels)
-            labels.remove(label)
-            
-            task_id = str(task.id)
-            self.task_change_counts[task_id] = self.task_change_counts.get(task_id, 0) - 1
-            self.task_labels[task_id] = labels
-    
-    def _commit_label_changes(self) -> None:
-        """Queue all accumulated label changes."""
-        for task_id, change_count in self.task_change_counts.items():
-            if change_count != 0:
-                labels = self.task_labels.get(task_id, [])
-                self.client.queue_label_update(task_id, labels)
+            current.remove(label)
+            self._desired_labels[task_id] = current
+
+    def _commit_label_changes(self) -> int:
+        """
+        Queue all label changes where desired state differs from original.
+
+        Returns:
+            Number of tasks with label changes queued
+        """
+        changes = 0
+        for task_id, desired in self._desired_labels.items():
+            original = self._original_labels.get(task_id, [])
+
+            # Only queue if labels actually changed
+            if set(desired) != set(original):
+                self.client.queue_label_update(task_id, desired)
+                changes += 1
+
+        return changes
 
 
 def run_labeling_pass(
