@@ -443,9 +443,9 @@ def check_for_update(current_version):
 
 
 def get_all_data(api):
+    # Updated to new v1 API endpoint (v9 was deprecated)
     BASE_URL = "https://api.todoist.com"
-    SYNC_VERSION = "v9"
-    SYNC_API = urljoin(BASE_URL, f"/sync/{SYNC_VERSION}/")
+    SYNC_API = urljoin(BASE_URL, "/api/v1/")
     COMPLETED_GET_ALL = "completed/get_all"
     endpoint = urljoin(SYNC_API, COMPLETED_GET_ALL)
     data = get(api._session, endpoint, api._token)
@@ -463,8 +463,9 @@ def initialise_sync_api(api):
     data = 'sync_token=*&resource_types=["all"]'
 
     try:
+        # Updated to new v1 API endpoint (v9 was deprecated)
         response = requests.post(
-            'https://api.todoist.com/sync/v9/sync', headers=headers, data=data)
+            'https://api.todoist.com/api/v1/sync', headers=headers, data=data)
         response.raise_for_status()  # Raise exception for 4xx/5xx status codes
     except requests.exceptions.HTTPError as e:
         logging.error(f"HTTP error during initialise_sync_api: {e}")
@@ -555,8 +556,9 @@ def sync(api):
         data = 'sync_token=' + api.sync_token + \
             '&commands=' + json.dumps(api.queue)
 
+        # Updated to new v1 API endpoint (v9 was deprecated)
         response = requests.post(
-            'https://api.todoist.com/sync/v9/sync', headers=headers, data=data)
+            'https://api.todoist.com/api/v1/sync', headers=headers, data=data)
 
         if response.status_code == 200:
             return response.json()
