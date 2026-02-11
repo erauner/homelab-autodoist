@@ -1,10 +1,19 @@
-FROM python:3-slim-bullseye
+FROM python:3.11-slim
 
-WORKDIR /usr/src/app
+LABEL org.opencontainers.image.source="https://github.com/erauner/homelab-autodoist"
+LABEL org.opencontainers.image.description="Autodoist - GTD automation for Todoist"
 
+WORKDIR /app
+
+# Install dependencies first for better caching
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy application
+COPY autodoist.py ./
 
-ENTRYPOINT [ "python", "./autodoist.py" ]
+# Run as non-root user
+RUN useradd -r -u 1000 autodoist
+USER autodoist
+
+ENTRYPOINT ["python", "autodoist.py"]
