@@ -34,7 +34,6 @@ class Config:
     hide_future: int = 0
     onetime: bool = False
     debug: bool = False
-    inbox: Optional[str] = None  # 'parallel', 'sequential', or None
     db_path: str = "metadata.sqlite"
     
     def __post_init__(self) -> None:
@@ -72,7 +71,6 @@ class Config:
             hide_future=args.hide_future if args.hide_future is not None else int(os.environ.get('AUTODOIST_HIDE_FUTURE', '0')),
             onetime=args.onetime or bool(os.environ.get('AUTODOIST_ONETIME')),
             debug=args.debug or bool(os.environ.get('AUTODOIST_DEBUG')),
-            inbox=args.inbox,
             db_path=os.environ.get('AUTODOIST_DB_PATH', 'metadata.sqlite'),
         )
 
@@ -138,13 +136,6 @@ def _create_parser() -> argparse.ArgumentParser:
         help='Enable debug logging',
         action='store_true'
     )
-    parser.add_argument(
-        '--inbox',
-        help='How to process the Inbox project',
-        default=None,
-        choices=['parallel', 'sequential']
-    )
-    
     return parser
 
 

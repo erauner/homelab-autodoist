@@ -30,7 +30,6 @@ def parse_type_suffix(
     s_suffix: str,
     p_suffix: str,
     width: int,
-    inbox_type: Optional[str] = None
 ) -> Optional[str]:
     """
     Parse type suffix from a project/section/task name.
@@ -43,16 +42,11 @@ def parse_type_suffix(
         s_suffix: Character indicating sequential (default '-')
         p_suffix: Character indicating parallel (default '=')
         width: Max chars to look for (3 for project, 2 for section, 1 for task)
-        inbox_type: Special type to return for 'Inbox' (if set)
-        
     Returns:
         Type string like 'sss', 'sp', 's', or None if no suffix found
     """
     if name is None:
         return None
-    
-    if name == 'Inbox' and inbox_type is not None:
-        return inbox_type
     
     try:
         # Match trailing suffix characters
@@ -92,7 +86,6 @@ def get_entity_type(
     s_suffix: str,
     p_suffix: str,
     width: int,
-    inbox_type: Optional[str] = None
 ) -> tuple[Optional[str], bool]:
     """
     Get the type for an entity, detecting if it changed.
@@ -105,13 +98,11 @@ def get_entity_type(
         s_suffix: Sequential suffix char
         p_suffix: Parallel suffix char
         width: Suffix width to parse
-        inbox_type: Special type for Inbox
-        
     Returns:
         Tuple of (type_str, changed) where changed is True if type differs from DB
     """
     # Parse current type from name
-    current_type = parse_type_suffix(name, s_suffix, p_suffix, width, inbox_type)
+    current_type = parse_type_suffix(name, s_suffix, p_suffix, width)
     
     # Get stored type from DB
     old_type = db.get_type_str(entity_kind, str(entity_id))
@@ -300,8 +291,7 @@ class LabelingEngine:
         # Get project type
         project_type, project_type_changed = get_entity_type(
             self.db, 'project', str(project.id), project.name,
-            self.config.s_suffix, self.config.p_suffix, 3,
-            self.config.inbox
+            self.config.s_suffix, self.config.p_suffix, 3
         )
         
         if project_type:
