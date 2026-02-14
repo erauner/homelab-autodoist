@@ -7,10 +7,11 @@ license = { text = "MIT" }
 authors = [
     { name = "Alexander Haselhoff", email = "xela@live.nl" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "todoist-api-python>=3.0.0",
     "requests>=2.28.1",
+    "homelab-gtd-contract @ git+https://github.com/erauner/homelab-gtd-contract.git@v0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +29,9 @@ Repository = "https://github.com/Hoffelhas/automation-todoist"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["autodoist"]

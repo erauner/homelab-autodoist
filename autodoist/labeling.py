@@ -15,6 +15,7 @@ import re
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
+from homelab_gtd_contract import parse_type_suffix as contract_parse_type_suffix
 from todoist_api_python.models import Task, Section, Project
 
 from .types import NoSection, normalize_parent_id, is_parentless, pad_type_str_to_three
@@ -34,8 +35,8 @@ def parse_type_suffix(
     """
     Parse type suffix from a project/section/task name.
     
-    Looks for trailing sequences of s_suffix ('-') and p_suffix ('=')
-    characters and converts them to a type string.
+    Delegates suffix parsing semantics to the shared GTD contract package,
+    then adapts to Autodoist's internal 3-char x/s/p representation.
     
     Args:
         name: The name/content to parse
@@ -43,36 +44,16 @@ def parse_type_suffix(
         p_suffix: Character indicating parallel (default '=')
         width: Max chars to look for (3 for project, 2 for section, 1 for task)
     Returns:
-        Type string like 'sss', 'sp', 's', or None if no suffix found
+        Type string like 'sss', 'xsp', 'xxs', or None if no suffix found
     """
-    if name is None:
-        return None
-    
     try:
-        # Match trailing suffix characters
-        regex = f'[{re.escape(s_suffix)}{re.escape(p_suffix)}]{{1,{width}}}$'
-        match = re.search(regex, name)
-        
-        if not match:
-            return None
-        
-        suffix = match.group(0)
-        
-        # Expand short suffixes by repeating last char
-        if len(suffix) < width:
-            suffix += suffix[-1] * (width - len(suffix))
-        
-        # Convert to s/p notation
-        type_str = ''
-        for char in suffix:
-            if char == s_suffix:
-                type_str += 's'
-            elif char == p_suffix:
-                type_str += 'p'
-        
-        # Pad with 'x' prefix to always return 3 chars
-        return pad_type_str_to_three(type_str)
-        
+        parsed = contract_parse_type_suffix(
+            name,
+            s_suffix=s_suffix,
+            p_suffix=p_suffix,
+            width=width,
+        )
+        return pad_type_str_to_three(parsed)
     except Exception:
         logging.debug("Could not parse type from: %s", name)
         return None
