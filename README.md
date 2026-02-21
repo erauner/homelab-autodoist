@@ -233,7 +233,9 @@ Then open:
 
 - `http://127.0.0.1:8080/` (dashboard)
 
-Dashboard includes a **Focus History** panel that defaults to open tasks only, so you can quickly backtrack recent focus sessions that are still actionable.
+Dashboard includes a **Focus History** panel that defaults to open tasks only and shows the latest 5 items by default (adjustable). Each row includes:
+- `Set as focus` (switches singleton focus to that task)
+- `Open in Todoist` deep link
 
 Useful API endpoints:
 
