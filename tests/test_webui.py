@@ -18,20 +18,24 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, tasks, projects, sections):
+    def __init__(self, tasks, projects, sections, wrapped=False):
         self.tasks = tasks
         self.projects = projects
         self.sections = sections
+        self.wrapped = wrapped
         self.headers = {}
         self.post_calls = []
 
     def get(self, url, params=None, timeout=20):
         if url.endswith("/tasks"):
-            return FakeResponse(deepcopy(self.tasks))
+            payload = deepcopy(self.tasks)
+            return FakeResponse({"results": payload} if self.wrapped else payload)
         if url.endswith("/projects"):
-            return FakeResponse(deepcopy(self.projects))
+            payload = deepcopy(self.projects)
+            return FakeResponse({"results": payload} if self.wrapped else payload)
         if url.endswith("/sections"):
-            return FakeResponse(deepcopy(self.sections))
+            payload = deepcopy(self.sections)
+            return FakeResponse({"results": payload} if self.wrapped else payload)
         return FakeResponse({}, status_code=404)
 
     def post(self, url, json=None, timeout=20):
@@ -90,9 +94,9 @@ def sample_data():
     return tasks, projects, sections
 
 
-def build_client(monkeypatch):
+def build_client(monkeypatch, wrapped=False):
     tasks, projects, sections = sample_data()
-    fake_session = FakeSession(tasks, projects, sections)
+    fake_session = FakeSession(tasks, projects, sections, wrapped=wrapped)
     monkeypatch.setattr("autodoist.webui.requests.Session", lambda: fake_session)
     app = create_app(
         api_token="test-token",
@@ -166,3 +170,12 @@ def test_reconcile_apply_honors_explicit_winner_override(monkeypatch):
     assert len(write_calls) == 1
     assert write_calls[0]["url"].endswith("/tasks/1002")
     assert write_calls[0]["json"]["labels"] == []
+
+
+def test_state_endpoint_accepts_results_wrapped_payloads(monkeypatch):
+    client, _ = build_client(monkeypatch, wrapped=True)
+    response = client.get("/api/state")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["summary"]["open_tasks"] == 3
+    assert payload["summary"]["doing_now_count"] == 2
