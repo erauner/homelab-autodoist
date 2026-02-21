@@ -245,7 +245,7 @@ class LabelingEngine:
         Returns:
             Number of label changes queued
         """
-        if not self.config.label and not self.config.doing_now_label:
+        if not self.config.label and not self.config.focus_label:
             return 0
         label = self.config.label
         
@@ -268,8 +268,8 @@ class LabelingEngine:
                     project, all_sections, all_tasks, label
                 )
 
-        if self.config.doing_now_label:
-            self._reconcile_singleton_label(all_tasks, self.config.doing_now_label)
+        if self.config.focus_label:
+            self._reconcile_singleton_label(all_tasks, self.config.focus_label)
 
         # Commit all DB changes batched during this pass
         self.db.commit()

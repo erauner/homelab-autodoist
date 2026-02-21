@@ -56,7 +56,7 @@ def sample_data():
             "id": 1001,
             "content": "Task A",
             "description": "",
-            "labels": ["doing_now", "next_action"],
+            "labels": ["focus", "next_action"],
             "priority": 1,
             "due": None,
             "added_at": "2026-01-01T10:00:00Z",
@@ -68,7 +68,7 @@ def sample_data():
             "id": 1002,
             "content": "Task B",
             "description": "",
-            "labels": ["doing_now"],
+            "labels": ["focus"],
             "priority": 1,
             "due": None,
             "added_at": "2026-01-01T11:00:00Z",
@@ -101,7 +101,7 @@ def build_client(monkeypatch, wrapped=False):
     app = create_app(
         api_token="test-token",
         next_action_label="next_action",
-        doing_now_label="doing_now",
+        focus_label="focus",
     )
     return app.test_client(), fake_session
 
@@ -122,18 +122,18 @@ def test_state_endpoint_includes_conflict_counts(monkeypatch):
     payload = response.get_json()
     assert payload["summary"]["open_tasks"] == 3
     assert payload["summary"]["next_action_count"] == 2
-    assert payload["summary"]["doing_now_count"] == 2
-    assert payload["summary"]["doing_now_conflicts"] == 1
+    assert payload["summary"]["focus_count"] == 2
+    assert payload["summary"]["focus_conflicts"] == 1
     by_id = {t["id"]: t for t in payload["tasks"]}
-    assert by_id["1002"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_winner"
-    assert by_id["1001"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_loser"
+    assert by_id["1002"]["explain"]["focus"]["reason_code"] == "singleton_conflict_winner"
+    assert by_id["1001"]["explain"]["focus"]["reason_code"] == "singleton_conflict_loser"
     assert by_id["1003"]["explain"]["next_action"]["reason_code"] == "label_present_on_active_task"
-    assert by_id["1003"]["explain"]["doing_now"]["reason_code"] == "singleton_assigned_to_other_task"
+    assert by_id["1003"]["explain"]["focus"]["reason_code"] == "singleton_assigned_to_other_task"
 
 
 def test_reconcile_dry_run_picks_most_recent_without_writing(monkeypatch):
     client, fake_session = build_client(monkeypatch)
-    response = client.post("/api/doing-now/reconcile", json={"apply": False})
+    response = client.post("/api/focus/reconcile", json={"apply": False})
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["ok"] is True
@@ -142,11 +142,37 @@ def test_reconcile_dry_run_picks_most_recent_without_writing(monkeypatch):
     assert payload["removed_count"] == 1
     write_calls = [c for c in fake_session.post_calls if "/tasks/" in c["url"]]
     assert len(write_calls) == 0
+    assert payload["preview"]["winner_task_id"] == "1002"
+    assert payload["preview"]["conflict_detected"] is True
+
+
+def test_reconcile_preview_returns_winner_losers_and_diffs(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/focus/reconcile-preview")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["conflict_detected"] is True
+    assert payload["winner_task_id"] == "1002"
+    assert payload["loser_count"] == 1
+    assert payload["losers"][0]["id"] == "1001"
+    assert payload["updates"][0]["task_id"] == "1001"
+    assert payload["updates"][0]["from_labels"] == ["focus", "next_action"]
+    assert payload["updates"][0]["to_labels"] == ["next_action"]
+
+
+def test_reconcile_preview_honors_explicit_winner_override(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/focus/reconcile-preview?winner_task_id=1001")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["winner_task_id"] == "1001"
+    assert payload["updates"][0]["task_id"] == "1002"
 
 
 def test_reconcile_apply_updates_losing_tasks(monkeypatch):
     client, fake_session = build_client(monkeypatch)
-    response = client.post("/api/doing-now/reconcile", json={"apply": True})
+    response = client.post("/api/focus/reconcile", json={"apply": True})
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["applied"] is True
@@ -162,7 +188,7 @@ def test_reconcile_apply_updates_losing_tasks(monkeypatch):
 def test_reconcile_apply_honors_explicit_winner_override(monkeypatch):
     client, fake_session = build_client(monkeypatch)
     response = client.post(
-        "/api/doing-now/reconcile",
+        "/api/focus/reconcile",
         json={"apply": True, "winner_task_id": "1001"},
     )
     assert response.status_code == 200
@@ -183,7 +209,7 @@ def test_state_endpoint_accepts_results_wrapped_payloads(monkeypatch):
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["summary"]["open_tasks"] == 3
-    assert payload["summary"]["doing_now_count"] == 2
+    assert payload["summary"]["focus_count"] == 2
 
 
 def test_explain_endpoint_returns_task_reasons(monkeypatch):
@@ -194,8 +220,8 @@ def test_explain_endpoint_returns_task_reasons(monkeypatch):
     assert payload["count"] == 3
 
     by_id = {t["id"]: t for t in payload["tasks"]}
-    assert by_id["1002"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_winner"
-    assert by_id["1001"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_loser"
+    assert by_id["1002"]["explain"]["focus"]["reason_code"] == "singleton_conflict_winner"
+    assert by_id["1001"]["explain"]["focus"]["reason_code"] == "singleton_conflict_loser"
     assert by_id["1003"]["explain"]["next_action"]["has_label"] is True
 
 
