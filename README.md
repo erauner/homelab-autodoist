@@ -239,6 +239,7 @@ Useful API endpoints:
 - `GET /api/explain` - per-task reason codes for `next_action` and `doing_now` decisions
 - `GET /api/tasks?label=doing_now` - filter tasks by label
 - `GET /api/tasks?contains=foo` - filter tasks by content
+- `GET /api/doing-now/reconcile-preview` - preview winner/losers and exact label diffs before apply
 - `POST /api/doing-now/reconcile` - dry-run or apply singleton reconciliation
 
 Reconcile examples:

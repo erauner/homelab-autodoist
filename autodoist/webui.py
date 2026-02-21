@@ -134,6 +134,11 @@ DASHBOARD_HTML = """
 
     .status.ok { color: var(--ok); }
     .status.err { color: var(--danger); }
+    .preview-meta {
+      margin: 6px 0 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
 
     table {
       width: 100%;
@@ -190,11 +195,15 @@ DASHBOARD_HTML = """
 
     <div class="controls">
       <button class="primary" onclick="refreshState()">Refresh</button>
-      <button onclick="dryRunReconcile()">Dry-run reconcile doing_now</button>
+      <button onclick="loadReconcilePreview()">Preview reconcile doing_now</button>
       <button class="warn" onclick="applyReconcile()">Apply reconcile doing_now</button>
     </div>
 
     <div id="status" class="status">Loading...</div>
+    <div class="card" id="reconcilePreview">
+      <div class="k">Reconcile Preview</div>
+      <div id="previewBody" class="preview-meta">Loading preview...</div>
+    </div>
 
     <table>
       <thead>
@@ -267,6 +276,41 @@ DASHBOARD_HTML = """
       }).join('');
     }
 
+    function renderReconcilePreview(preview) {
+      const el = document.getElementById('previewBody');
+      if (!preview.ok) {
+        el.textContent = 'Preview unavailable.';
+        return;
+      }
+      if (!preview.conflict_detected) {
+        el.innerHTML = `No conflict detected. Winner: <span class="mono">${esc(preview.winner_task_id || 'none')}</span>`;
+        return;
+      }
+
+      const updates = (preview.updates || []).map((u) => {
+        const fromLabels = (u.from_labels || []).join(', ') || '-';
+        const toLabels = (u.to_labels || []).join(', ') || '-';
+        return `<li><span class="mono">${esc(u.task_id)}</span> (${esc(u.content || '')}): [${esc(fromLabels)}] → [${esc(toLabels)}]</li>`;
+      }).join('');
+
+      el.innerHTML = `
+        <div>Winner: <span class="mono">${esc(preview.winner_task_id)}</span> (${esc(preview.winner_content || '')})</div>
+        <div class="preview-meta">Losers: ${esc(preview.loser_count)} task(s)</div>
+        <ul>${updates}</ul>
+      `;
+    }
+
+    async function loadReconcilePreview() {
+      try {
+        const res = await fetch(`${apiBase}/doing-now/reconcile-preview`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        renderReconcilePreview(data);
+      } catch (err) {
+        setStatus(`Preview error: ${err.message}`, 'err');
+      }
+    }
+
     async function refreshState() {
       try {
         setStatus('Loading state...');
@@ -275,6 +319,7 @@ DASHBOARD_HTML = """
         const state = await res.json();
         renderSummary(state.summary);
         renderTasks(state.tasks, state.labels);
+        await loadReconcilePreview();
         setStatus(`Loaded ${state.summary.open_tasks} tasks at ${state.generated_at}`, 'ok');
       } catch (err) {
         setStatus(`Error loading state: ${err.message}`, 'err');
@@ -282,7 +327,8 @@ DASHBOARD_HTML = """
     }
 
     async function dryRunReconcile() {
-      await doReconcile(false);
+      await loadReconcilePreview();
+      setStatus('Loaded reconcile preview.', 'ok');
     }
 
     async function applyReconcile() {
@@ -516,6 +562,61 @@ def create_app(
             return None
         return winner if isinstance(winner, dict) else None
 
+    def build_reconcile_preview(
+        state: Dict[str, Any],
+        preferred_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        doing_now_tasks = [t for t in state["tasks"] if t["has_doing_now"]]
+        if len(doing_now_tasks) <= 1:
+            winner = doing_now_tasks[0] if doing_now_tasks else None
+            return {
+                "ok": True,
+                "generated_at": state["generated_at"],
+                "conflict_detected": False,
+                "winner_task_id": winner["id"] if winner else None,
+                "winner_content": winner["content"] if winner else None,
+                "winner_updated_at": winner["updated_at"] if winner else None,
+                "loser_count": 0,
+                "losers": [],
+                "updates": [],
+                "message": "No conflict detected.",
+            }
+
+        winner = pick_winner(doing_now_tasks, preferred_task_id)
+        assert winner is not None
+        losers = [t for t in doing_now_tasks if t["id"] != winner["id"]]
+
+        updates = []
+        for task in losers:
+            new_labels = [l for l in task["labels"] if l != doing_now_label]
+            updates.append(
+                {
+                    "task_id": task["id"],
+                    "content": task.get("content"),
+                    "from_labels": task["labels"],
+                    "to_labels": new_labels,
+                }
+            )
+
+        return {
+            "ok": True,
+            "generated_at": state["generated_at"],
+            "conflict_detected": True,
+            "winner_task_id": winner["id"],
+            "winner_content": winner.get("content"),
+            "winner_updated_at": winner.get("updated_at"),
+            "loser_count": len(losers),
+            "losers": [
+                {
+                    "id": t["id"],
+                    "content": t.get("content"),
+                    "updated_at": t.get("updated_at"),
+                }
+                for t in losers
+            ],
+            "updates": updates,
+        }
+
     @app.get("/")
     def index() -> str:
         return render_template_string(DASHBOARD_HTML)
@@ -592,6 +693,18 @@ def create_app(
         except requests.RequestException as exc:
             return jsonify({"error": f"Todoist API request error: {exc}"}), 502
 
+    @app.get("/api/doing-now/reconcile-preview")
+    def reconcile_doing_now_preview():
+        winner_task_id = request.args.get("winner_task_id")
+        try:
+            state = fetch_state()
+            preview = build_reconcile_preview(state, winner_task_id)
+            return jsonify(preview)
+        except requests.HTTPError as exc:
+            return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
+        except requests.RequestException as exc:
+            return jsonify({"error": f"Todoist API request error: {exc}"}), 502
+
     @app.post("/api/doing-now/reconcile")
     def reconcile_doing_now():
         try:
@@ -600,30 +713,18 @@ def create_app(
             winner_task_id = body.get("winner_task_id")
 
             state = fetch_state()
-            doing_now_tasks = [t for t in state["tasks"] if t["has_doing_now"]]
+            preview = build_reconcile_preview(state, winner_task_id)
+            updates = preview["updates"]
 
-            if len(doing_now_tasks) <= 1:
-                winner = doing_now_tasks[0]["id"] if doing_now_tasks else None
+            if not preview["conflict_detected"]:
                 return jsonify({
                     "ok": True,
                     "applied": apply_changes,
-                    "winner_task_id": winner,
+                    "winner_task_id": preview["winner_task_id"],
                     "removed_count": 0,
                     "updated_task_ids": [],
-                    "message": "No conflict detected.",
-                })
-
-            winner = pick_winner(doing_now_tasks, winner_task_id)
-            assert winner is not None
-
-            losers = [t for t in doing_now_tasks if t["id"] != winner["id"]]
-            updates = []
-            for task in losers:
-                new_labels = [l for l in task["labels"] if l != doing_now_label]
-                updates.append({
-                    "task_id": task["id"],
-                    "from_labels": task["labels"],
-                    "to_labels": new_labels,
+                    "message": preview["message"],
+                    "preview": preview,
                 })
 
             if apply_changes:
@@ -633,11 +734,12 @@ def create_app(
             return jsonify({
                 "ok": True,
                 "applied": apply_changes,
-                "winner_task_id": winner["id"],
-                "winner_updated_at": winner.get("updated_at"),
+                "winner_task_id": preview["winner_task_id"],
+                "winner_updated_at": preview["winner_updated_at"],
                 "removed_count": len(updates),
                 "updated_task_ids": [u["task_id"] for u in updates],
                 "updates": updates,
+                "preview": preview,
             })
         except requests.HTTPError as exc:
             return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502

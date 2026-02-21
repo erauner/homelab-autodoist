@@ -142,6 +142,32 @@ def test_reconcile_dry_run_picks_most_recent_without_writing(monkeypatch):
     assert payload["removed_count"] == 1
     write_calls = [c for c in fake_session.post_calls if "/tasks/" in c["url"]]
     assert len(write_calls) == 0
+    assert payload["preview"]["winner_task_id"] == "1002"
+    assert payload["preview"]["conflict_detected"] is True
+
+
+def test_reconcile_preview_returns_winner_losers_and_diffs(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/doing-now/reconcile-preview")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["conflict_detected"] is True
+    assert payload["winner_task_id"] == "1002"
+    assert payload["loser_count"] == 1
+    assert payload["losers"][0]["id"] == "1001"
+    assert payload["updates"][0]["task_id"] == "1001"
+    assert payload["updates"][0]["from_labels"] == ["doing_now", "next_action"]
+    assert payload["updates"][0]["to_labels"] == ["next_action"]
+
+
+def test_reconcile_preview_honors_explicit_winner_override(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/doing-now/reconcile-preview?winner_task_id=1001")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["winner_task_id"] == "1001"
+    assert payload["updates"][0]["task_id"] == "1002"
 
 
 def test_reconcile_apply_updates_losing_tasks(monkeypatch):
