@@ -39,6 +39,49 @@ def test_db_singleton_state_roundtrip(tmp_path) -> None:
         db.close()
 
 
+def test_db_focus_history_sessions_are_idempotent(tmp_path) -> None:
+    db = MetadataDB(str(tmp_path / "metadata.sqlite"), auto_commit=True)
+    db.connect()
+    try:
+        db.start_singleton_session(
+            "focus",
+            "1",
+            assigned_at=1000,
+            source="test",
+            reason="start",
+        )
+        db.start_singleton_session(
+            "focus",
+            "1",
+            assigned_at=1001,
+            source="test",
+            reason="duplicate_start",
+        )
+        sessions = db.list_singleton_history("focus")
+        assert len(sessions) == 1
+        assert sessions[0]["cleared_at"] is None
+
+        db.end_singleton_session(
+            "focus",
+            "1",
+            cleared_at=2000,
+            source="test",
+            reason="end",
+        )
+        db.end_singleton_session(
+            "focus",
+            "1",
+            cleared_at=2001,
+            source="test",
+            reason="duplicate_end",
+        )
+        sessions = db.list_singleton_history("focus")
+        assert len(sessions) == 1
+        assert sessions[0]["cleared_at"] == 2000
+    finally:
+        db.close()
+
+
 @dataclass
 class MockTask:
     id: str
@@ -104,6 +147,10 @@ def test_focus_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
         assert changes == 1
         assert client.label_updates == [("1001", ["next_action"])]
         assert db.get_active_singleton_tasks("focus") == ["1002"]
+        history = db.list_singleton_history("focus", limit=10)
+        by_task = {item["task_id"]: item for item in history}
+        assert by_task["1002"]["cleared_at"] is None
+        assert by_task["1001"]["cleared_at"] is not None
     finally:
         db.close()
 
@@ -145,4 +192,3 @@ def test_main_allows_focus_only_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     rc = entry.main([])
     assert rc == 0
     assert fake_client.labels_ensured == ["focus"]
-

@@ -10,11 +10,13 @@ or:
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
 from flask import Flask, jsonify, render_template_string, request
+from .db import MetadataDB
 from .singleton import choose_singleton_winner
 
 TODOIST_API_V1_BASE = "https://api.todoist.com/api/v1"
@@ -497,8 +499,10 @@ def create_app(
     api_token: str,
     next_action_label: str = "next_action",
     focus_label: str = "focus",
+    db_path: Optional[str] = None,
 ) -> Flask:
     app = Flask(__name__)
+    resolved_db_path = db_path or os.environ.get("AUTODOIST_DB_PATH", "metadata.sqlite")
     session = requests.Session()
     session.headers.update({"Authorization": f"Bearer {api_token}"})
 
@@ -513,6 +517,65 @@ def create_app(
         if response.content:
             return response.json()
         return {"ok": True}
+
+    def _now_ms() -> int:
+        return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    def _open_db() -> MetadataDB:
+        db = MetadataDB(resolved_db_path, auto_commit=True)
+        db.connect()
+        return db
+
+    def _mark_focus_active(
+        task_id: str,
+        *,
+        source: str,
+        reason: str,
+        assigned_at: Optional[int] = None,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> None:
+        ts = assigned_at if assigned_at is not None else _now_ms()
+        db = _open_db()
+        try:
+            db.set_singleton_state(focus_label, str(task_id), is_active=True, assigned_at=ts)
+            db.start_singleton_session(
+                focus_label,
+                str(task_id),
+                assigned_at=ts,
+                source=source,
+                reason=reason,
+                meta=meta,
+            )
+        finally:
+            db.close()
+
+    def _mark_focus_inactive(
+        task_id: str,
+        *,
+        source: str,
+        reason: str,
+        cleared_at: Optional[int] = None,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> None:
+        ts = cleared_at if cleared_at is not None else _now_ms()
+        db = _open_db()
+        try:
+            db.set_singleton_state(focus_label, str(task_id), is_active=False)
+            db.end_singleton_session(
+                focus_label,
+                str(task_id),
+                cleared_at=ts,
+                source=source,
+                reason=reason,
+                meta=meta,
+            )
+        finally:
+            db.close()
+
+    def _to_bool(value: Optional[str], default: bool = False) -> bool:
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def fetch_state() -> Dict[str, Any]:
         tasks = _as_list(todoist_get("/tasks"))
@@ -551,7 +614,15 @@ def create_app(
         if len(focus_tasks) > 1:
             for item in focus_tasks:
                 item["is_focus_conflict"] = True
-        winner = choose_singleton_winner(focus_tasks)
+        task_ids = [str(t["id"]) for t in focus_tasks]
+        assigned_at_by_task_id: dict[str, Optional[int]] = {}
+        if task_ids:
+            db = _open_db()
+            try:
+                assigned_at_by_task_id = db.get_singleton_assigned_at_map(focus_label, task_ids)
+            finally:
+                db.close()
+        winner = choose_singleton_winner(focus_tasks, assigned_at_by_task_id=assigned_at_by_task_id)
         winner_task_id = str(winner["id"]) if isinstance(winner, dict) and winner.get("id") is not None else None
 
         for item in open_tasks:
@@ -789,6 +860,83 @@ def create_app(
         except requests.RequestException as exc:
             return jsonify({"error": f"Todoist API request error: {exc}"}), 502
 
+    @app.get("/api/focus/history")
+    def focus_history():
+        open_only = _to_bool(request.args.get("open_only"), default=False)
+        limit = int(request.args.get("limit", "50"))
+        try:
+            db = _open_db()
+            try:
+                sessions = db.list_singleton_history(focus_label, limit=limit)
+            finally:
+                db.close()
+
+            state = fetch_state()
+            task_map = {str(t["id"]): t for t in state["tasks"]}
+            if open_only:
+                sessions = [s for s in sessions if s["task_id"] in task_map]
+
+            enriched = []
+            for session_item in sessions:
+                task = task_map.get(session_item["task_id"])
+                enriched.append(
+                    {
+                        **session_item,
+                        "still_open": task is not None,
+                        "content": task.get("content") if task else None,
+                        "project_name": task.get("project_name") if task else None,
+                        "section_name": task.get("section_name") if task else None,
+                    }
+                )
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "generated_at": state["generated_at"],
+                    "label": focus_label,
+                    "open_only": open_only,
+                    "count": len(enriched),
+                    "sessions": enriched,
+                }
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except requests.HTTPError as exc:
+            return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
+        except requests.RequestException as exc:
+            return jsonify({"error": f"Todoist API request error: {exc}"}), 502
+
+    @app.get("/api/focus/history/<task_id>")
+    def focus_history_for_task(task_id: str):
+        limit = int(request.args.get("limit", "50"))
+        try:
+            db = _open_db()
+            try:
+                sessions = db.list_singleton_history(focus_label, task_id=str(task_id), limit=limit)
+            finally:
+                db.close()
+            state = fetch_state()
+            task = next((t for t in state["tasks"] if t["id"] == str(task_id)), None)
+            return jsonify(
+                {
+                    "ok": True,
+                    "generated_at": state["generated_at"],
+                    "label": focus_label,
+                    "task_id": str(task_id),
+                    "task_missing": task is None,
+                    "still_open": task is not None,
+                    "content": task.get("content") if task else None,
+                    "count": len(sessions),
+                    "sessions": sessions,
+                }
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except requests.HTTPError as exc:
+            return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
+        except requests.RequestException as exc:
+            return jsonify({"error": f"Todoist API request error: {exc}"}), 502
+
     @app.post("/api/tasks/<task_id>/labels")
     def task_label_action(task_id: str):
         try:
@@ -811,6 +959,11 @@ def create_app(
                 if focus_label not in labels:
                     labels.append(focus_label)
                     _set_labels(task_id, labels)
+                _mark_focus_active(
+                    str(task_id),
+                    source="webui",
+                    reason="action_set_focus",
+                )
                 return jsonify(
                     {
                         "ok": True,
@@ -824,6 +977,11 @@ def create_app(
             if action == "clear_focus":
                 labels = [l for l in labels if l != focus_label]
                 _set_labels(task_id, labels)
+                _mark_focus_inactive(
+                    str(task_id),
+                    source="webui",
+                    reason="action_clear_focus",
+                )
                 return jsonify(
                     {
                         "ok": True,
@@ -861,10 +1019,21 @@ def create_app(
             if focus_label not in labels:
                 labels.append(focus_label)
                 _set_labels(task_id, labels)
+            _mark_focus_active(
+                str(task_id),
+                source="webui",
+                reason="action_make_winner",
+            )
 
             # Remove focus from all losers using the same diff source as preview/apply.
             for upd in preview["updates"]:
                 _set_labels(upd["task_id"], upd["to_labels"])
+                _mark_focus_inactive(
+                    upd["task_id"],
+                    source="webui",
+                    reason="reconcile_loser",
+                    meta={"winner_task_id": str(task_id)},
+                )
 
             return jsonify(
                 {
@@ -918,6 +1087,18 @@ def create_app(
             if apply_changes:
                 for upd in updates:
                     todoist_post(f"/tasks/{upd['task_id']}", {"labels": upd["to_labels"]})
+                    _mark_focus_inactive(
+                        upd["task_id"],
+                        source="webui",
+                        reason="reconcile_loser",
+                        meta={"winner_task_id": preview["winner_task_id"]},
+                    )
+                if preview["winner_task_id"] is not None:
+                    _mark_focus_active(
+                        preview["winner_task_id"],
+                        source="webui",
+                        reason="reconcile_winner",
+                    )
 
             return jsonify({
                 "ok": True,
@@ -957,6 +1138,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="focus",
         help="Label name treated as singleton focus label",
     )
+    parser.add_argument(
+        "--db-path",
+        default=os.environ.get("AUTODOIST_DB_PATH", "metadata.sqlite"),
+        help="Path to metadata SQLite database used for focus history (default from AUTODOIST_DB_PATH)",
+    )
     return parser.parse_args(argv)
 
 
@@ -966,6 +1152,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         api_token=args.api_key,
         next_action_label=args.next_action_label,
         focus_label=args.focus_label,
+        db_path=args.db_path,
     )
     app.run(host=args.host, port=args.port, debug=False)
     return 0

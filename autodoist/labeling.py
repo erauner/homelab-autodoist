@@ -298,13 +298,20 @@ class LabelingEngine:
                 current_active.add(str(task.id))
 
         db_active = set(self.db.get_active_singleton_tasks(label_name))
+        now_ms = int(time.time() * 1000)
 
         # Mark tasks that were previously active but are no longer labeled as inactive.
         for task_id in db_active - current_active:
             self.db.set_singleton_state(label_name, task_id, is_active=False)
+            self.db.end_singleton_session(
+                label_name,
+                task_id,
+                cleared_at=now_ms,
+                source="autodoist_poll",
+                reason="observed_label_absent",
+            )
 
         assigned_at_by_task_id: dict[str, Optional[int]] = {}
-        now_ms = int(time.time() * 1000)
 
         # Track currently labeled tasks and persist first-seen activation timestamps.
         for task in candidates:
@@ -319,6 +326,13 @@ class LabelingEngine:
                 task_id,
                 is_active=True,
                 assigned_at=assigned_at,
+            )
+            self.db.start_singleton_session(
+                label_name,
+                task_id,
+                assigned_at=assigned_at if assigned_at is not None else now_ms,
+                source="autodoist_poll",
+                reason="observed_label_present",
             )
 
         if len(candidates) <= 1:
@@ -335,7 +349,16 @@ class LabelingEngine:
         losers = [task for task in candidates if str(task.id) != winner_id]
         for task in losers:
             self._remove_label(task, label_name)
-            self.db.set_singleton_state(label_name, str(task.id), is_active=False)
+            loser_id = str(task.id)
+            self.db.set_singleton_state(label_name, loser_id, is_active=False)
+            self.db.end_singleton_session(
+                label_name,
+                loser_id,
+                cleared_at=now_ms,
+                source="autodoist_reconcile",
+                reason="singleton_conflict_loser",
+                meta={"winner_task_id": winner_id},
+            )
 
         logging.info(
             "Found %d tasks with @%s; keeping %s and removing from %d task(s).",
