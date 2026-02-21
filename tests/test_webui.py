@@ -280,6 +280,34 @@ def test_state_endpoint_accepts_results_wrapped_payloads(monkeypatch):
     assert payload["summary"]["focus_count"] == 2
 
 
+def test_tasks_endpoint_supports_quick_views(monkeypatch):
+    client, _ = build_client(monkeypatch)
+
+    response = client.get("/api/tasks?view=next_action")
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
+
+    response = client.get("/api/tasks?view=focus")
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
+
+    response = client.get("/api/tasks?view=conflicts")
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
+
+    response = client.get("/api/tasks?view=no_labels")
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 0
+
+
+def test_tasks_endpoint_rejects_unknown_view(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/tasks?view=invalid")
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert "Unsupported view" in payload["error"]
+
+
 def test_explain_endpoint_returns_task_reasons(monkeypatch):
     client, _ = build_client(monkeypatch)
     response = client.get("/api/explain")

@@ -181,6 +181,8 @@ DASHBOARD_HTML = """
     .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .actions button { padding: 4px 8px; font-size: 0.78rem; }
+    .view-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px 0; }
+    .view-controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
 
     @media (max-width: 800px) {
       .hide-mobile { display: none; }
@@ -199,6 +201,13 @@ DASHBOARD_HTML = """
       <button class="primary" onclick="refreshState()">Refresh</button>
       <button onclick="loadReconcilePreview()">Preview reconcile focus</button>
       <button class="warn" onclick="applyReconcile()">Apply reconcile focus</button>
+    </div>
+    <div class="view-controls" id="viewControls">
+      <button data-view="all" onclick="setTaskView('all')">All</button>
+      <button data-view="next_action" onclick="setTaskView('next_action')">Only next_action</button>
+      <button data-view="focus" onclick="setTaskView('focus')">Only focus</button>
+      <button data-view="conflicts" onclick="setTaskView('conflicts')">Conflicts only</button>
+      <button data-view="no_labels" onclick="setTaskView('no_labels')">No labels</button>
     </div>
 
     <div id="status" class="status">Loading...</div>
@@ -224,6 +233,9 @@ DASHBOARD_HTML = """
 
   <script>
     const apiBase = '/api';
+    const VIEW_KEY = 'autodoist_saved_view';
+    let currentTaskView = localStorage.getItem(VIEW_KEY) || 'all';
+    let currentState = null;
 
     function esc(v) {
       return String(v ?? '').replace(/[&<>\"]/g, (s) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]));
@@ -293,6 +305,36 @@ DASHBOARD_HTML = """
       }).join('');
     }
 
+    function filterTasksByView(tasks, view) {
+      if (view === 'next_action') return tasks.filter((t) => t.has_next_action);
+      if (view === 'focus') return tasks.filter((t) => t.has_focus);
+      if (view === 'conflicts') return tasks.filter((t) => t.is_focus_conflict);
+      if (view === 'no_labels') return tasks.filter((t) => !Array.isArray(t.labels) || t.labels.length === 0);
+      return tasks;
+    }
+
+    function updateTaskViewButtons() {
+      const buttons = document.querySelectorAll('#viewControls button[data-view]');
+      buttons.forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === currentTaskView);
+      });
+    }
+
+    function renderCurrentView() {
+      if (!currentState) return;
+      const filtered = filterTasksByView(currentState.tasks || [], currentTaskView);
+      renderTasks(filtered, currentState.labels);
+      const label = currentTaskView === 'all' ? 'all' : currentTaskView;
+      setStatus(`Loaded ${filtered.length} task(s) in '${label}' view at ${currentState.generated_at}`, 'ok');
+    }
+
+    function setTaskView(view) {
+      currentTaskView = view;
+      localStorage.setItem(VIEW_KEY, view);
+      updateTaskViewButtons();
+      renderCurrentView();
+    }
+
     function renderReconcilePreview(preview) {
       const el = document.getElementById('previewBody');
       if (!preview.ok) {
@@ -334,10 +376,11 @@ DASHBOARD_HTML = """
         const res = await fetch(`${apiBase}/state`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const state = await res.json();
+        currentState = state;
+        updateTaskViewButtons();
         renderSummary(state.summary);
-        renderTasks(state.tasks, state.labels);
+        renderCurrentView();
         await loadReconcilePreview();
-        setStatus(`Loaded ${state.summary.open_tasks} tasks at ${state.generated_at}`, 'ok');
       } catch (err) {
         setStatus(`Error loading state: ${err.message}`, 'err');
       }
@@ -434,6 +477,20 @@ def _parse_default_type_suffix(name: Optional[str], width: int) -> Optional[str]
     if len(suffix) < width:
         suffix += suffix[-1] * (width - len(suffix))
     return "".join("s" if ch == "-" else "p" for ch in suffix)
+
+
+def _apply_task_view(tasks: List[Dict[str, Any]], view: str) -> List[Dict[str, Any]]:
+    if view == "all":
+        return tasks
+    if view == "next_action":
+        return [t for t in tasks if bool(t.get("has_next_action"))]
+    if view == "focus":
+        return [t for t in tasks if bool(t.get("has_focus"))]
+    if view == "conflicts":
+        return [t for t in tasks if bool(t.get("is_focus_conflict"))]
+    if view == "no_labels":
+        return [t for t in tasks if not (t.get("labels") or [])]
+    raise ValueError(f"Unsupported view '{view}'")
 
 
 def create_app(
@@ -672,6 +729,7 @@ def create_app(
     def api_tasks():
         label = request.args.get("label")
         contains = request.args.get("contains")
+        view = request.args.get("view", "all")
 
         try:
             state = fetch_state()
@@ -682,12 +740,16 @@ def create_app(
             if contains:
                 c = contains.lower()
                 tasks = [t for t in tasks if c in (t.get("content") or "").lower()]
+            tasks = _apply_task_view(tasks, view)
 
             return jsonify({
                 "generated_at": state["generated_at"],
                 "count": len(tasks),
+                "view": view,
                 "tasks": tasks,
             })
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         except requests.HTTPError as exc:
             return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
         except requests.RequestException as exc:
