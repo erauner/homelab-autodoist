@@ -224,6 +224,7 @@ DASHBOARD_HTML = """
       <div class="k">Focus History</div>
       <div class="inline-controls">
         <label><input type="checkbox" id="focusHistoryOpenOnly" checked onchange="loadFocusHistory()"> Open tasks only</label>
+        <label><input type="checkbox" id="focusHistoryLatestPerTask" checked onchange="loadFocusHistory()"> Latest per task</label>
         <button onclick="loadFocusHistory()">Refresh history</button>
       </div>
       <div id="focusHistoryBody" class="preview-meta">Loading focus history...</div>
@@ -395,8 +396,10 @@ DASHBOARD_HTML = """
     async function loadFocusHistory() {
       try {
         const openOnly = document.getElementById('focusHistoryOpenOnly').checked;
+        const latestPerTask = document.getElementById('focusHistoryLatestPerTask').checked;
         const params = new URLSearchParams({
           open_only: openOnly ? 'true' : 'false',
+          latest_per_task: latestPerTask ? 'true' : 'false',
           limit: '20'
         });
         const res = await fetch(`${apiBase}/focus/history?${params.toString()}`);
@@ -911,6 +914,7 @@ def create_app(
     @app.get("/api/focus/history")
     def focus_history():
         open_only = _to_bool(request.args.get("open_only"), default=False)
+        latest_per_task = _to_bool(request.args.get("latest_per_task"), default=True)
         limit = int(request.args.get("limit", "50"))
         try:
             db = _open_db()
@@ -923,6 +927,16 @@ def create_app(
             task_map = {str(t["id"]): t for t in state["tasks"]}
             if open_only:
                 sessions = [s for s in sessions if s["task_id"] in task_map]
+            if latest_per_task:
+                deduped: list[dict[str, Any]] = []
+                seen_task_ids: set[str] = set()
+                for session_item in sessions:
+                    task_id = session_item["task_id"]
+                    if task_id in seen_task_ids:
+                        continue
+                    seen_task_ids.add(task_id)
+                    deduped.append(session_item)
+                sessions = deduped
 
             enriched = []
             for session_item in sessions:
@@ -943,6 +957,7 @@ def create_app(
                     "generated_at": state["generated_at"],
                     "label": focus_label,
                     "open_only": open_only,
+                    "latest_per_task": latest_per_task,
                     "count": len(enriched),
                     "sessions": enriched,
                 }

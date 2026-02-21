@@ -244,7 +244,7 @@ Useful API endpoints:
 - `GET /api/tasks?contains=foo` - filter tasks by content
 - `GET /api/tasks?view=next_action|focus|conflicts|no_labels` - quick triage views
 - `POST /api/tasks/<task_id>/labels` - row actions (`set_focus`, `clear_focus`, `remove_next_action`, `make_winner`)
-- `GET /api/focus/history` - focus session history (supports `open_only` and `limit`)
+- `GET /api/focus/history` - focus session history (supports `open_only`, `latest_per_task`, and `limit`)
 - `GET /api/focus/history/<task_id>` - focus history for one task
 - `GET /api/focus/reconcile-preview` - preview winner/losers and exact label diffs before apply
 - `POST /api/focus/reconcile` - dry-run or apply singleton reconciliation

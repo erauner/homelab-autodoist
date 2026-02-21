@@ -220,6 +220,7 @@ def test_focus_history_open_only(monkeypatch, tmp_path):
     payload = response.get_json()
     assert payload["open_only"] is True
     assert all(s["still_open"] is True for s in payload["sessions"])
+    assert payload["latest_per_task"] is True
 
 
 def test_focus_history_by_task(monkeypatch, tmp_path):
@@ -234,6 +235,28 @@ def test_focus_history_by_task(monkeypatch, tmp_path):
     assert payload["ok"] is True
     assert payload["task_id"] == "1003"
     assert payload["count"] >= 1
+
+
+def test_focus_history_latest_per_task_dedupes_repeated_sessions(monkeypatch, tmp_path):
+    db_path = tmp_path / "metadata.sqlite"
+    client, _ = build_client(monkeypatch, db_path=db_path)
+
+    assert client.post("/api/tasks/1003/labels", json={"action": "set_focus"}).status_code == 200
+    assert client.post("/api/tasks/1003/labels", json={"action": "clear_focus"}).status_code == 200
+    assert client.post("/api/tasks/1003/labels", json={"action": "set_focus"}).status_code == 200
+
+    response = client.get("/api/focus/history?open_only=false&latest_per_task=true")
+    assert response.status_code == 200
+    payload = response.get_json()
+    # latest_per_task should collapse repeated sessions for task 1003
+    task_ids = [s["task_id"] for s in payload["sessions"]]
+    assert task_ids.count("1003") == 1
+
+    response = client.get("/api/focus/history?open_only=false&latest_per_task=false")
+    assert response.status_code == 200
+    payload = response.get_json()
+    task_ids = [s["task_id"] for s in payload["sessions"]]
+    assert task_ids.count("1003") >= 2
 
 
 def test_task_action_clear_focus(monkeypatch):
