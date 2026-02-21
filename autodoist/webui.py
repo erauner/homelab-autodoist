@@ -334,6 +334,24 @@ def _parse_iso(value: Optional[str]) -> datetime:
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+def _as_list(payload: Any) -> List[Dict[str, Any]]:
+    """
+    Normalize Todoist API payloads into a list of objects.
+
+    Some endpoints return plain lists, while others may return wrapper
+    objects (e.g. {"results": [...]}).
+    """
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        if isinstance(payload.get("results"), list):
+            return [item for item in payload["results"] if isinstance(item, dict)]
+        if isinstance(payload.get("items"), list):
+            return [item for item in payload["items"] if isinstance(item, dict)]
+        return []
+    return []
+
+
 def create_app(
     api_token: str,
     next_action_label: str = "next_action",
@@ -356,9 +374,9 @@ def create_app(
         return {"ok": True}
 
     def fetch_state() -> Dict[str, Any]:
-        tasks = todoist_get("/tasks")
-        projects = todoist_get("/projects")
-        sections = todoist_get("/sections")
+        tasks = _as_list(todoist_get("/tasks"))
+        projects = _as_list(todoist_get("/projects"))
+        sections = _as_list(todoist_get("/sections"))
 
         project_by_id = {str(p["id"]): p.get("name") for p in projects}
         section_by_id = {str(s["id"]): s.get("name") for s in sections}
