@@ -179,6 +179,8 @@ DASHBOARD_HTML = """
     .conflict { background: #fff2f0; border-color: #f2a8a0; color: #8f1f14; }
 
     .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .actions button { padding: 4px 8px; font-size: 0.78rem; }
 
     @media (max-width: 800px) {
       .hide-mobile { display: none; }
@@ -211,6 +213,7 @@ DASHBOARD_HTML = """
           <th>Task</th>
           <th class="hide-mobile">Project / Section</th>
           <th>Labels</th>
+          <th>Actions</th>
           <th class="hide-mobile">Updated</th>
           <th class="hide-mobile">Task ID</th>
         </tr>
@@ -248,7 +251,7 @@ DASHBOARD_HTML = """
     function renderTasks(tasks, labels) {
       const tbody = document.getElementById('tasks');
       if (!tasks.length) {
-        tbody.innerHTML = '<tr><td colspan="5">No tasks returned.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6">No tasks returned.</td></tr>';
         return;
       }
 
@@ -264,11 +267,25 @@ DASHBOARD_HTML = """
           }
         }
 
+        const actions = [];
+        if (t.has_focus) {
+          actions.push(`<button onclick="taskAction('${esc(t.id)}','clear_focus')">Clear focus</button>`);
+        } else {
+          actions.push(`<button onclick="taskAction('${esc(t.id)}','set_focus')">Set focus</button>`);
+        }
+        if (t.has_next_action) {
+          actions.push(`<button onclick="taskAction('${esc(t.id)}','remove_next_action')">Remove next_action</button>`);
+        }
+        if (t.is_focus_conflict) {
+          actions.push(`<button class="warn" onclick="taskAction('${esc(t.id)}','make_winner')">Make winner</button>`);
+        }
+
         return `
           <tr>
             <td>${esc(t.content)}</td>
             <td class="hide-mobile">${esc(t.project_name || '-')} / ${esc(t.section_name || '-')}</td>
             <td>${pills.join(' ') || '-'}</td>
+            <td><div class="actions">${actions.join(' ') || '-'}</div></td>
             <td class="hide-mobile mono">${esc(t.updated_at || 'n/a')}</td>
             <td class="hide-mobile mono">${esc(t.id)}</td>
           </tr>
@@ -352,6 +369,23 @@ DASHBOARD_HTML = """
         setStatus(msg, 'ok');
       } catch (err) {
         setStatus(`Reconcile error: ${err.message}`, 'err');
+      }
+    }
+
+    async function taskAction(taskId, action) {
+      try {
+        setStatus(`Applying action ${action} on ${taskId}...`);
+        const res = await fetch(`${apiBase}/tasks/${taskId}/labels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setStatus(data.message || `Action ${action} applied to ${taskId}.`, 'ok');
+        await refreshState();
+      } catch (err) {
+        setStatus(`Task action error: ${err.message}`, 'err');
       }
     }
 
@@ -686,6 +720,98 @@ def create_app(
                     "summary": state["summary"],
                     "count": len(explained),
                     "tasks": explained,
+                }
+            )
+        except requests.HTTPError as exc:
+            return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
+        except requests.RequestException as exc:
+            return jsonify({"error": f"Todoist API request error: {exc}"}), 502
+
+    @app.post("/api/tasks/<task_id>/labels")
+    def task_label_action(task_id: str):
+        try:
+            body = request.get_json(silent=True) or {}
+            action = str(body.get("action", "")).strip()
+            allowed_actions = {"set_focus", "clear_focus", "remove_next_action", "make_winner"}
+            if action not in allowed_actions:
+                return jsonify({"error": f"Unsupported action '{action}'"}), 400
+
+            state = fetch_state()
+            task = next((t for t in state["tasks"] if t["id"] == str(task_id)), None)
+            if task is None:
+                return jsonify({"error": f"Task '{task_id}' not found"}), 404
+
+            def _set_labels(target_task_id: str, labels: list[str]) -> None:
+                todoist_post(f"/tasks/{target_task_id}", {"labels": labels})
+
+            labels = list(task["labels"])
+            if action == "set_focus":
+                if focus_label not in labels:
+                    labels.append(focus_label)
+                    _set_labels(task_id, labels)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "action": action,
+                        "task_id": task_id,
+                        "labels": labels,
+                        "message": f"Set @{focus_label} on task {task_id}.",
+                    }
+                )
+
+            if action == "clear_focus":
+                labels = [l for l in labels if l != focus_label]
+                _set_labels(task_id, labels)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "action": action,
+                        "task_id": task_id,
+                        "labels": labels,
+                        "message": f"Cleared @{focus_label} on task {task_id}.",
+                    }
+                )
+
+            if action == "remove_next_action":
+                labels = [l for l in labels if l != next_action_label]
+                _set_labels(task_id, labels)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "action": action,
+                        "task_id": task_id,
+                        "labels": labels,
+                        "message": f"Removed @{next_action_label} on task {task_id}.",
+                    }
+                )
+
+            # action == make_winner
+            preview = build_reconcile_preview(state, preferred_task_id=str(task_id))
+            if not preview["conflict_detected"]:
+                return jsonify(
+                    {
+                        "error": "No focus conflict detected. 'make_winner' is only valid during conflicts.",
+                        "preview": preview,
+                    }
+                ), 400
+
+            # Ensure selected winner has focus
+            if focus_label not in labels:
+                labels.append(focus_label)
+                _set_labels(task_id, labels)
+
+            # Remove focus from all losers using the same diff source as preview/apply.
+            for upd in preview["updates"]:
+                _set_labels(upd["task_id"], upd["to_labels"])
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "action": action,
+                    "task_id": task_id,
+                    "winner_task_id": preview["winner_task_id"],
+                    "updated_task_ids": [task_id] + [u["task_id"] for u in preview["updates"]],
+                    "message": f"Task {task_id} selected as @{focus_label} winner.",
                 }
             )
         except requests.HTTPError as exc:
