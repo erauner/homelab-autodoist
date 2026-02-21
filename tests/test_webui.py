@@ -170,6 +170,74 @@ def test_reconcile_preview_honors_explicit_winner_override(monkeypatch):
     assert payload["updates"][0]["task_id"] == "1002"
 
 
+def test_task_action_set_focus(monkeypatch):
+    client, fake_session = build_client(monkeypatch)
+    response = client.post("/api/tasks/1003/labels", json={"action": "set_focus"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["action"] == "set_focus"
+    assert "focus" in payload["labels"]
+
+    write_calls = [c for c in fake_session.post_calls if c["url"].endswith("/tasks/1003")]
+    assert len(write_calls) == 1
+    assert "focus" in write_calls[0]["json"]["labels"]
+
+
+def test_task_action_clear_focus(monkeypatch):
+    client, fake_session = build_client(monkeypatch)
+    response = client.post("/api/tasks/1002/labels", json={"action": "clear_focus"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["labels"] == []
+
+    write_calls = [c for c in fake_session.post_calls if c["url"].endswith("/tasks/1002")]
+    assert len(write_calls) == 1
+    assert write_calls[0]["json"]["labels"] == []
+
+
+def test_task_action_remove_next_action(monkeypatch):
+    client, fake_session = build_client(monkeypatch)
+    response = client.post("/api/tasks/1001/labels", json={"action": "remove_next_action"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["labels"] == ["focus"]
+
+    write_calls = [c for c in fake_session.post_calls if c["url"].endswith("/tasks/1001")]
+    assert len(write_calls) == 1
+    assert write_calls[0]["json"]["labels"] == ["focus"]
+
+
+def test_task_action_make_winner_updates_losers(monkeypatch):
+    client, fake_session = build_client(monkeypatch)
+    response = client.post("/api/tasks/1001/labels", json={"action": "make_winner"})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["winner_task_id"] == "1001"
+
+    write_calls = [c for c in fake_session.post_calls if "/tasks/" in c["url"]]
+    assert len(write_calls) == 1
+    assert write_calls[0]["url"].endswith("/tasks/1002")
+    assert write_calls[0]["json"]["labels"] == []
+
+
+def test_task_action_make_winner_requires_conflict(monkeypatch):
+    client, fake_session = build_client(monkeypatch)
+    # Clear focus from one conflicting task first.
+    response = client.post("/api/tasks/1002/labels", json={"action": "clear_focus"})
+    assert response.status_code == 200
+    fake_session.post_calls.clear()
+
+    # No conflict now; make_winner should reject.
+    response = client.post("/api/tasks/1001/labels", json={"action": "make_winner"})
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert "No focus conflict detected" in payload["error"]
+
+
 def test_reconcile_apply_updates_losing_tasks(monkeypatch):
     client, fake_session = build_client(monkeypatch)
     response = client.post("/api/focus/reconcile", json={"apply": True})
