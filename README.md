@@ -198,3 +198,68 @@ Or with command line arguments:
 ```bash
 docker run autodoist:latest -a <API_KEY> -l next_action
 ```
+
+# Debug Web UI + JSON API (local)
+
+A lightweight local dashboard is available to inspect Autodoist-relevant task state without using the Todoist UI.
+
+Run it with:
+
+```bash
+autodoist-webui --api-key <API_KEY>
+```
+
+Or:
+
+```bash
+python -m autodoist.webui --api-key <API_KEY>
+```
+
+Optional arguments:
+
+```bash
+autodoist-webui --host 127.0.0.1 --port 8080 --next-action-label next_action --doing-now-label doing_now
+```
+
+Then open:
+
+- `http://127.0.0.1:8080/` (dashboard)
+
+Useful API endpoints:
+
+- `GET /api/health` - simple health check
+- `GET /api/state` - full snapshot with tasks, labels, counts, and detected `doing_now` conflicts
+- `GET /api/tasks?label=doing_now` - filter tasks by label
+- `GET /api/tasks?contains=foo` - filter tasks by content
+- `POST /api/doing-now/reconcile` - dry-run or apply singleton reconciliation
+
+Reconcile examples:
+
+Dry-run (no changes):
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+  -H 'Content-Type: application/json' \
+  -d '{"apply": false}'
+```
+
+Apply conflict resolution:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+  -H 'Content-Type: application/json' \
+  -d '{"apply": true}'
+```
+
+Force a winner task id:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+  -H 'Content-Type: application/json' \
+  -d '{"apply": true, "winner_task_id": "1234567890"}'
+```
+
+Notes:
+
+- Winner selection defaults to newest `updated_at`, then highest task id as a stable tie-break.
+- This UI/API is intentionally standalone and does not modify Autodoist's core labeling loop.

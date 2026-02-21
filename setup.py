@@ -15,6 +15,7 @@ setup(
     install_requires=[
         'todoist-api-python>=3.0.0',
         'requests>=2.28.1',
+        'Flask>=3.0.0',
     ],
     extras_require={
         'dev': [
@@ -24,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'autodoist=autodoist.__main__:main',
+            'autodoist-webui=autodoist.webui:main',
         ],
     },
     classifiers=[
