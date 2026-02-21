@@ -146,6 +146,7 @@ All configuration can be set via environment variables for containerized deploym
 | `AUTODOIST_P_SUFFIX` | Parallel suffix character | `=` |
 | `AUTODOIST_S_SUFFIX` | Sequential suffix character | `-` |
 | `AUTODOIST_HIDE_FUTURE` | Days to hide future tasks | 0 |
+| `AUTODOIST_DOING_NOW_LABEL` | Singleton label to enforce (keeps only one active task) | - |
 | `AUTODOIST_ONETIME` | Run once and exit | false |
 | `AUTODOIST_DEBUG` | Enable debug logging | false |
 | `AUTODOIST_DB_PATH` | Path to SQLite database | metadata.sqlite |
@@ -171,6 +172,12 @@ In addition, if you experience issues with syncing you can increase the api sync
 
 ```bash
 python -m autodoist --delay <time in seconds>
+```
+
+To enforce a singleton focus label (`doing_now`) across all active tasks:
+
+```bash
+python -m autodoist --doing-now-label doing_now
 ```
 
 For all arguments, please check out the help:

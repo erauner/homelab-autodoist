@@ -44,11 +44,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         modes.append("Next action labelling: Enabled")
     else:
         modes.append("Next action labelling: Disabled")
+    if config.doing_now_label:
+        modes.append(f"Doing-now singleton: Enabled ({config.doing_now_label})")
+    else:
+        modes.append("Doing-now singleton: Disabled")
     
     logging.info("Running with the following configuration:\n  %s", "\n  ".join(modes))
     
-    if not config.label:
-        logging.info("No functionality enabled. Use -l <LABEL> to enable labeling.")
+    if not config.label and not config.doing_now_label:
+        logging.info("No functionality enabled. Use -l <LABEL> and/or --doing-now-label <LABEL>.")
         return 0
     
     # Initialize API client
@@ -60,12 +64,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logging.error("Could not connect to Todoist: %s", e)
         return 1
     
-    # Ensure label exists
-    if config.label:
+    # Ensure required labels exist
+    labels_to_ensure = {x for x in (config.label, config.doing_now_label) if x}
+    for label_name in labels_to_ensure:
         try:
-            client.ensure_label_exists(config.label)
+            client.ensure_label_exists(label_name)
         except Exception as e:
-            logging.error("Could not create label '%s': %s", config.label, e)
+            logging.error("Could not create label '%s': %s", label_name, e)
             return 1
     
     # Initialize database

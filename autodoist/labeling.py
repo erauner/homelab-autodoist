@@ -12,6 +12,7 @@ This module contains the main labeling algorithm that:
 from __future__ import annotations
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from todoist_api_python.models import Task, Section, Project
 
 from .types import NoSection, normalize_parent_id, is_parentless, pad_type_str_to_three
 from .db import MetadataDB
+from .singleton import choose_singleton_winner, task_updated_epoch_ms
 
 if TYPE_CHECKING:
     from .config import Config
@@ -243,9 +245,8 @@ class LabelingEngine:
         Returns:
             Number of label changes queued
         """
-        if not self.config.label:
+        if not self.config.label and not self.config.doing_now_label:
             return 0
-        
         label = self.config.label
         
         # Fetch all data
@@ -257,20 +258,92 @@ class LabelingEngine:
             logging.error("Error fetching data: %s", e)
             return 0
         
-        for project in all_projects:
-            # Skip inbox
-            if project.is_inbox_project:
-                continue
+        if label:
+            for project in all_projects:
+                # Skip inbox
+                if project.is_inbox_project:
+                    continue
 
-            self._process_project(
-                project, all_sections, all_tasks, label
-            )
+                self._process_project(
+                    project, all_sections, all_tasks, label
+                )
+
+        if self.config.doing_now_label:
+            self._reconcile_singleton_label(all_tasks, self.config.doing_now_label)
 
         # Commit all DB changes batched during this pass
         self.db.commit()
 
         # Queue all label updates and return count
         return self._commit_label_changes()
+
+    def _reconcile_singleton_label(self, all_tasks: list[Task], label_name: str) -> None:
+        """
+        Ensure only one non-completed task keeps the singleton label.
+
+        Winner selection precedence:
+        1) Most recent locally-observed assignment (`assigned_at`)
+        2) Task `updated_at`
+        3) Task ID (stable tie-break)
+        """
+        candidates: list[Task] = []
+        current_active: set[str] = set()
+
+        for task in all_tasks:
+            if task.is_completed:
+                continue
+            labels = self._get_current_labels(task)
+            if label_name in labels:
+                candidates.append(task)
+                current_active.add(str(task.id))
+
+        db_active = set(self.db.get_active_singleton_tasks(label_name))
+
+        # Mark tasks that were previously active but are no longer labeled as inactive.
+        for task_id in db_active - current_active:
+            self.db.set_singleton_state(label_name, task_id, is_active=False)
+
+        assigned_at_by_task_id: dict[str, Optional[int]] = {}
+        now_ms = int(time.time() * 1000)
+
+        # Track currently labeled tasks and persist first-seen activation timestamps.
+        for task in candidates:
+            task_id = str(task.id)
+            assigned_at = self.db.get_singleton_assigned_at(label_name, task_id)
+            if task_id not in db_active:
+                observed_updated_at = task_updated_epoch_ms(task)
+                assigned_at = observed_updated_at if observed_updated_at is not None else now_ms
+            assigned_at_by_task_id[task_id] = assigned_at
+            self.db.set_singleton_state(
+                label_name,
+                task_id,
+                is_active=True,
+                assigned_at=assigned_at,
+            )
+
+        if len(candidates) <= 1:
+            return
+
+        winner = choose_singleton_winner(
+            candidates,
+            assigned_at_by_task_id=assigned_at_by_task_id,
+        )
+        if winner is None:
+            return
+
+        winner_id = str(winner.id)
+        losers = [task for task in candidates if str(task.id) != winner_id]
+        for task in losers:
+            self._remove_label(task, label_name)
+            self.db.set_singleton_state(label_name, str(task.id), is_active=False)
+
+        logging.info(
+            "Found %d tasks with @%s; keeping %s and removing from %d task(s).",
+            len(candidates),
+            label_name,
+            winner_id,
+            len(losers),
+        )
     
     def _process_project(
         self,

@@ -219,6 +219,23 @@ class TodoistClient:
             "args": {"id": task_id, "labels": labels}
         }
         self._queue.append(data)
+
+    def get_task_v1(self, task_id: str) -> dict[str, Any]:
+        """Fetch a single task via REST API v1."""
+        response = requests.get(
+            f"https://api.todoist.com/api/v1/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else {}
+
+    def get_task_updated_at_v1(self, task_id: str) -> Optional[str]:
+        """Fetch `updated_at` for a task via REST API v1."""
+        payload = self.get_task_v1(task_id)
+        value = payload.get("updated_at")
+        return str(value) if value is not None else None
     
     def update_task_via_rest(self, task_id: str, **kwargs: Any) -> None:
         """
