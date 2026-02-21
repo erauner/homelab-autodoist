@@ -124,6 +124,11 @@ def test_state_endpoint_includes_conflict_counts(monkeypatch):
     assert payload["summary"]["next_action_count"] == 2
     assert payload["summary"]["doing_now_count"] == 2
     assert payload["summary"]["doing_now_conflicts"] == 1
+    by_id = {t["id"]: t for t in payload["tasks"]}
+    assert by_id["1002"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_winner"
+    assert by_id["1001"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_loser"
+    assert by_id["1003"]["explain"]["next_action"]["reason_code"] == "label_present_on_active_task"
+    assert by_id["1003"]["explain"]["doing_now"]["reason_code"] == "singleton_assigned_to_other_task"
 
 
 def test_reconcile_dry_run_picks_most_recent_without_writing(monkeypatch):
@@ -179,3 +184,25 @@ def test_state_endpoint_accepts_results_wrapped_payloads(monkeypatch):
     payload = response.get_json()
     assert payload["summary"]["open_tasks"] == 3
     assert payload["summary"]["doing_now_count"] == 2
+
+
+def test_explain_endpoint_returns_task_reasons(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/explain")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 3
+
+    by_id = {t["id"]: t for t in payload["tasks"]}
+    assert by_id["1002"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_winner"
+    assert by_id["1001"]["explain"]["doing_now"]["reason_code"] == "singleton_conflict_loser"
+    assert by_id["1003"]["explain"]["next_action"]["has_label"] is True
+
+
+def test_explain_endpoint_supports_task_id_filter(monkeypatch):
+    client, _ = build_client(monkeypatch)
+    response = client.get("/api/explain?task_id=1001")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 1
+    assert payload["tasks"][0]["id"] == "1001"
