@@ -225,6 +225,14 @@ DASHBOARD_HTML = """
       <div class="inline-controls">
         <label><input type="checkbox" id="focusHistoryOpenOnly" checked onchange="loadFocusHistory()"> Open tasks only</label>
         <label><input type="checkbox" id="focusHistoryLatestPerTask" checked onchange="loadFocusHistory()"> Latest per task</label>
+        <label>Show
+          <select id="focusHistoryLimit" onchange="loadFocusHistory()">
+            <option value="5" selected>5</option>
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+        </label>
         <button onclick="loadFocusHistory()">Refresh history</button>
       </div>
       <div id="focusHistoryBody" class="preview-meta">Loading focus history...</div>
@@ -388,7 +396,11 @@ DASHBOARD_HTML = """
         const assigned = new Date(s.assigned_at).toLocaleString();
         const cleared = s.cleared_at ? new Date(s.cleared_at).toLocaleString() : 'active';
         const content = s.content || '(task not currently open)';
-        return `<li><span class="mono">${esc(s.task_id)}</span> ${esc(content)}<br><span class="mono">assigned:</span> ${esc(assigned)} · <span class="mono">cleared:</span> ${esc(cleared)}</li>`;
+        const todoistUrl = `https://todoist.com/showTask?id=${encodeURIComponent(s.task_id)}`;
+        const focusBtn = s.still_open
+          ? `<button onclick="setFocusFromHistory('${esc(s.task_id)}')">Set as focus</button>`
+          : '';
+        return `<li><span class="mono">${esc(s.task_id)}</span> ${esc(content)}<br><span class="mono">assigned:</span> ${esc(assigned)} · <span class="mono">cleared:</span> ${esc(cleared)}<br><a href="${todoistUrl}" target="_blank" rel="noopener noreferrer">Open in Todoist</a> ${focusBtn}</li>`;
       }).join('');
       el.innerHTML = `<div>${esc(sessions.length)} session(s)</div><ul class="history-list">${rows}</ul>`;
     }
@@ -397,10 +409,11 @@ DASHBOARD_HTML = """
       try {
         const openOnly = document.getElementById('focusHistoryOpenOnly').checked;
         const latestPerTask = document.getElementById('focusHistoryLatestPerTask').checked;
+        const limit = document.getElementById('focusHistoryLimit').value || '5';
         const params = new URLSearchParams({
           open_only: openOnly ? 'true' : 'false',
           latest_per_task: latestPerTask ? 'true' : 'false',
-          limit: '20'
+          limit
         });
         const res = await fetch(`${apiBase}/focus/history?${params.toString()}`);
         const data = await res.json();
@@ -408,6 +421,32 @@ DASHBOARD_HTML = """
         renderFocusHistory(data);
       } catch (err) {
         setStatus(`Focus history error: ${err.message}`, 'err');
+      }
+    }
+
+    async function setFocusFromHistory(taskId) {
+      try {
+        setStatus(`Setting focus to ${taskId}...`);
+        let res = await fetch(`${apiBase}/tasks/${taskId}/labels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_focus' })
+        });
+        let data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        res = await fetch(`${apiBase}/focus/reconcile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apply: true, winner_task_id: taskId })
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        setStatus(`Focus switched to ${taskId}.`, 'ok');
+        await refreshState();
+      } catch (err) {
+        setStatus(`Focus switch error: ${err.message}`, 'err');
       }
     }
 
