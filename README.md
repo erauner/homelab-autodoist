@@ -233,6 +233,8 @@ Then open:
 
 - `http://127.0.0.1:8080/` (dashboard)
 
+Dashboard includes a **Focus History** panel that defaults to open tasks only, so you can quickly backtrack recent focus sessions that are still actionable.
+
 Useful API endpoints:
 
 - `GET /api/health` - simple health check
