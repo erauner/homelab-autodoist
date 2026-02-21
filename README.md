@@ -239,6 +239,7 @@ Useful API endpoints:
 - `GET /api/explain` - per-task reason codes for `next_action` and `focus` decisions
 - `GET /api/tasks?label=focus` - filter tasks by label
 - `GET /api/tasks?contains=foo` - filter tasks by content
+- `GET /api/tasks?view=next_action|focus|conflicts|no_labels` - quick triage views
 - `POST /api/tasks/<task_id>/labels` - row actions (`set_focus`, `clear_focus`, `remove_next_action`, `make_winner`)
 - `GET /api/focus/reconcile-preview` - preview winner/losers and exact label diffs before apply
 - `POST /api/focus/reconcile` - dry-run or apply singleton reconciliation
