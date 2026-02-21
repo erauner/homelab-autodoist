@@ -44,15 +44,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         modes.append("Next action labelling: Enabled")
     else:
         modes.append("Next action labelling: Disabled")
-    if config.doing_now_label:
-        modes.append(f"Doing-now singleton: Enabled ({config.doing_now_label})")
+    if config.focus_label:
+        modes.append(f"Focus singleton: Enabled ({config.focus_label})")
     else:
-        modes.append("Doing-now singleton: Disabled")
+        modes.append("Focus singleton: Disabled")
     
     logging.info("Running with the following configuration:\n  %s", "\n  ".join(modes))
     
-    if not config.label and not config.doing_now_label:
-        logging.info("No functionality enabled. Use -l <LABEL> and/or --doing-now-label <LABEL>.")
+    if not config.label and not config.focus_label:
+        logging.info("No functionality enabled. Use -l <LABEL> and/or --focus-label <LABEL>.")
         return 0
     
     # Initialize API client
@@ -65,7 +65,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
     
     # Ensure required labels exist
-    labels_to_ensure = {x for x in (config.label, config.doing_now_label) if x}
+    labels_to_ensure = {x for x in (config.label, config.focus_label) if x}
     for label_name in labels_to_ensure:
         try:
             client.ensure_label_exists(label_name)

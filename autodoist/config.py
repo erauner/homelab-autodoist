@@ -4,7 +4,7 @@ Configuration management via environment variables and CLI arguments.
 Environment variables (primary for K8s/Docker):
   TODOIST_API_KEY    - Todoist API key (required)
   AUTODOIST_LABEL    - Label name for next actions
-  AUTODOIST_DOING_NOW_LABEL - Singleton label name for doing-now reconciliation
+  AUTODOIST_FOCUS_LABEL - Singleton label name for focus reconciliation
   AUTODOIST_DELAY    - Delay between syncs in seconds
   AUTODOIST_P_SUFFIX - Parallel suffix character
   AUTODOIST_S_SUFFIX - Sequential suffix character  
@@ -29,7 +29,7 @@ class Config:
     
     api_key: str
     label: Optional[str] = None
-    doing_now_label: Optional[str] = None
+    focus_label: Optional[str] = None
     delay: int = 5
     p_suffix: str = "="
     s_suffix: str = "-"
@@ -67,10 +67,10 @@ class Config:
         return cls(
             api_key=api_key,
             label=args.label if args.label is not None else os.environ.get('AUTODOIST_LABEL'),
-            doing_now_label=(
-                args.doing_now_label
-                if args.doing_now_label is not None
-                else os.environ.get('AUTODOIST_DOING_NOW_LABEL')
+            focus_label=(
+                args.focus_label
+                if args.focus_label is not None
+                else os.environ.get('AUTODOIST_FOCUS_LABEL')
             ),
             delay=args.delay if args.delay is not None else int(os.environ.get('AUTODOIST_DELAY', '5')),
             p_suffix=args.p_suffix if args.p_suffix is not None else os.environ.get('AUTODOIST_P_SUFFIX', '='),
@@ -112,9 +112,9 @@ def _create_parser() -> argparse.ArgumentParser:
         type=str
     )
     parser.add_argument(
-        '--doing_now_label', '--doing-now-label',
-        dest='doing_now_label',
-        help='Enable singleton label enforcement for this label name (e.g. doing_now)',
+        '--focus_label', '--focus-label',
+        dest='focus_label',
+        help='Enable singleton label enforcement for this label name (e.g. focus)',
         default=None,
         type=str,
     )

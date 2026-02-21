@@ -10,31 +10,31 @@ from autodoist.db import MetadataDB
 from autodoist.labeling import LabelingEngine
 
 
-def test_config_reads_doing_now_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_reads_focus_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TODOIST_API_KEY", "test-token")
-    monkeypatch.setenv("AUTODOIST_DOING_NOW_LABEL", "doing_now")
+    monkeypatch.setenv("AUTODOIST_FOCUS_LABEL", "focus")
     config = Config.from_env_and_cli([])
-    assert config.doing_now_label == "doing_now"
+    assert config.focus_label == "focus"
 
 
-def test_config_cli_overrides_doing_now_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_cli_overrides_focus_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TODOIST_API_KEY", "test-token")
-    monkeypatch.setenv("AUTODOIST_DOING_NOW_LABEL", "from_env")
-    config = Config.from_env_and_cli(["--doing-now-label", "from_cli"])
-    assert config.doing_now_label == "from_cli"
+    monkeypatch.setenv("AUTODOIST_FOCUS_LABEL", "from_env")
+    config = Config.from_env_and_cli(["--focus-label", "from_cli"])
+    assert config.focus_label == "from_cli"
 
 
 def test_db_singleton_state_roundtrip(tmp_path) -> None:
     db = MetadataDB(str(tmp_path / "metadata.sqlite"), auto_commit=True)
     db.connect()
     try:
-        db.set_singleton_state("doing_now", "1", is_active=True, assigned_at=111)
-        db.set_singleton_state("doing_now", "2", is_active=False)
+        db.set_singleton_state("focus", "1", is_active=True, assigned_at=111)
+        db.set_singleton_state("focus", "2", is_active=False)
 
-        active = db.get_active_singleton_tasks("doing_now")
+        active = db.get_active_singleton_tasks("focus")
         assert active == ["1"]
-        assert db.get_singleton_assigned_at("doing_now", "1") == 111
-        assert db.get_singleton_assigned_at("doing_now", "2") is None
+        assert db.get_singleton_assigned_at("focus", "1") == 111
+        assert db.get_singleton_assigned_at("focus", "2") is None
     finally:
         db.close()
 
@@ -70,7 +70,7 @@ class MockClient:
         self.label_updates.append((str(task_id), list(labels)))
 
 
-def test_doing_now_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
+def test_focus_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
     tasks = [
         MockTask(
             id="1001",
@@ -79,7 +79,7 @@ def test_doing_now_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
             section_id=None,
             parent_id=None,
             order=1,
-            labels=["doing_now", "next_action"],
+            labels=["focus", "next_action"],
             updated_at="2026-02-20T10:00:00Z",
         ),
         MockTask(
@@ -89,7 +89,7 @@ def test_doing_now_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
             section_id=None,
             parent_id=None,
             order=2,
-            labels=["doing_now"],
+            labels=["focus"],
             updated_at="2026-02-20T12:00:00Z",
         ),
     ]
@@ -97,21 +97,21 @@ def test_doing_now_conflict_keeps_recent_and_removes_loser(tmp_path) -> None:
     db = MetadataDB(str(tmp_path / "metadata.sqlite"))
     db.connect()
     try:
-        config = Config(api_key="token", doing_now_label="doing_now")
+        config = Config(api_key="token", focus_label="focus")
         engine = LabelingEngine(client=client, db=db, config=config)
         changes = engine.run()
 
         assert changes == 1
         assert client.label_updates == [("1001", ["next_action"])]
-        assert db.get_active_singleton_tasks("doing_now") == ["1002"]
+        assert db.get_active_singleton_tasks("focus") == ["1002"]
     finally:
         db.close()
 
 
-def test_main_allows_doing_now_only_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_allows_focus_only_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     import autodoist.__main__ as entry
 
-    config = Config(api_key="token", doing_now_label="doing_now", onetime=True)
+    config = Config(api_key="token", focus_label="focus", onetime=True)
 
     class FakeClient:
         def __init__(self, api_key: str) -> None:
@@ -144,5 +144,5 @@ def test_main_allows_doing_now_only_mode(monkeypatch: pytest.MonkeyPatch) -> Non
 
     rc = entry.main([])
     assert rc == 0
-    assert fake_client.labels_ensured == ["doing_now"]
+    assert fake_client.labels_ensured == ["focus"]
 

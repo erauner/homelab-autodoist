@@ -195,8 +195,8 @@ DASHBOARD_HTML = """
 
     <div class="controls">
       <button class="primary" onclick="refreshState()">Refresh</button>
-      <button onclick="loadReconcilePreview()">Preview reconcile doing_now</button>
-      <button class="warn" onclick="applyReconcile()">Apply reconcile doing_now</button>
+      <button onclick="loadReconcilePreview()">Preview reconcile focus</button>
+      <button class="warn" onclick="applyReconcile()">Apply reconcile focus</button>
     </div>
 
     <div id="status" class="status">Loading...</div>
@@ -236,8 +236,8 @@ DASHBOARD_HTML = """
       const cards = [
         ['Open Tasks', summary.open_tasks],
         ['next_action Count', summary.next_action_count],
-        ['doing_now Count', summary.doing_now_count],
-        ['doing_now Conflicts', summary.doing_now_conflicts]
+        ['focus Count', summary.focus_count],
+        ['focus Conflicts', summary.focus_conflicts]
       ];
 
       document.getElementById('summary').innerHTML = cards.map(([k, v]) =>
@@ -255,11 +255,11 @@ DASHBOARD_HTML = """
       tbody.innerHTML = tasks.map((t) => {
         const pills = [];
         if (t.has_next_action) pills.push(`<span class="pill na">${esc(labels.next_action_label)}</span>`);
-        if (t.has_doing_now) pills.push(`<span class="pill dn">${esc(labels.doing_now_label)}</span>`);
-        if (t.is_doing_now_conflict) pills.push('<span class="pill conflict">conflict</span>');
+        if (t.has_focus) pills.push(`<span class="pill dn">${esc(labels.focus_label)}</span>`);
+        if (t.is_focus_conflict) pills.push('<span class="pill conflict">conflict</span>');
 
         for (const l of t.labels) {
-          if (l !== labels.next_action_label && l !== labels.doing_now_label) {
+          if (l !== labels.next_action_label && l !== labels.focus_label) {
             pills.push(`<span class="pill">${esc(l)}</span>`);
           }
         }
@@ -302,7 +302,7 @@ DASHBOARD_HTML = """
 
     async function loadReconcilePreview() {
       try {
-        const res = await fetch(`${apiBase}/doing-now/reconcile-preview`);
+        const res = await fetch(`${apiBase}/focus/reconcile-preview`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         renderReconcilePreview(data);
@@ -339,7 +339,7 @@ DASHBOARD_HTML = """
     async function doReconcile(apply) {
       try {
         setStatus(`${apply ? 'Applying' : 'Running dry-run'} reconcile...`);
-        const res = await fetch(`${apiBase}/doing-now/reconcile`, {
+        const res = await fetch(`${apiBase}/focus/reconcile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ apply })
@@ -405,7 +405,7 @@ def _parse_default_type_suffix(name: Optional[str], width: int) -> Optional[str]
 def create_app(
     api_token: str,
     next_action_label: str = "next_action",
-    doing_now_label: str = "doing_now",
+    focus_label: str = "focus",
 ) -> Flask:
     app = Flask(__name__)
     session = requests.Session()
@@ -432,7 +432,7 @@ def create_app(
         section_by_id = {str(s["id"]): s.get("name") for s in sections}
 
         open_tasks: List[Dict[str, Any]] = []
-        doing_now_tasks: List[Dict[str, Any]] = []
+        focus_tasks: List[Dict[str, Any]] = []
 
         for task in tasks:
             task_labels = task.get("labels") or []
@@ -450,17 +450,17 @@ def create_app(
                 "added_at": task.get("added_at"),
                 "updated_at": task.get("updated_at"),
                 "has_next_action": next_action_label in task_labels,
-                "has_doing_now": doing_now_label in task_labels,
-                "is_doing_now_conflict": False,
+                "has_focus": focus_label in task_labels,
+                "is_focus_conflict": False,
             }
             open_tasks.append(item)
-            if item["has_doing_now"]:
-                doing_now_tasks.append(item)
+            if item["has_focus"]:
+                focus_tasks.append(item)
 
-        if len(doing_now_tasks) > 1:
-            for item in doing_now_tasks:
-                item["is_doing_now_conflict"] = True
-        winner = choose_singleton_winner(doing_now_tasks)
+        if len(focus_tasks) > 1:
+            for item in focus_tasks:
+                item["is_focus_conflict"] = True
+        winner = choose_singleton_winner(focus_tasks)
         winner_task_id = str(winner["id"]) if isinstance(winner, dict) and winner.get("id") is not None else None
 
         for item in open_tasks:
@@ -488,21 +488,21 @@ def create_app(
                 na_code = "not_selected_by_ordering_or_rules"
                 na_message = "Task is currently not selected by sequential/parallel labeling rules."
 
-            if item["has_doing_now"] and item["is_doing_now_conflict"] and winner_task_id == item["id"]:
+            if item["has_focus"] and item["is_focus_conflict"] and winner_task_id == item["id"]:
                 dn_code = "singleton_conflict_winner"
-                dn_message = "Task is the chosen singleton winner among conflicting doing_now labels."
-            elif item["has_doing_now"] and item["is_doing_now_conflict"]:
+                dn_message = "Task is the chosen singleton winner among conflicting focus labels."
+            elif item["has_focus"] and item["is_focus_conflict"]:
                 dn_code = "singleton_conflict_loser"
-                dn_message = "Task currently has doing_now but is a losing task in singleton conflict."
-            elif item["has_doing_now"]:
+                dn_message = "Task currently has focus but is a losing task in singleton conflict."
+            elif item["has_focus"]:
                 dn_code = "singleton_holder"
-                dn_message = "Task currently holds doing_now and no conflict is detected."
+                dn_message = "Task currently holds focus and no conflict is detected."
             elif winner_task_id is not None:
                 dn_code = "singleton_assigned_to_other_task"
-                dn_message = f"Another task ({winner_task_id}) currently holds doing_now."
+                dn_message = f"Another task ({winner_task_id}) currently holds focus."
             else:
                 dn_code = "not_labeled"
-                dn_message = "Task does not have doing_now label."
+                dn_message = "Task does not have focus label."
 
             item["explain"] = {
                 "next_action": {
@@ -510,8 +510,8 @@ def create_app(
                     "reason_code": na_code,
                     "reason": na_message,
                 },
-                "doing_now": {
-                    "has_label": item["has_doing_now"],
+                "focus": {
+                    "has_label": item["has_focus"],
                     "reason_code": dn_code,
                     "reason": dn_message,
                     "winner_task_id": winner_task_id,
@@ -523,39 +523,39 @@ def create_app(
                     "section_type": section_type,
                     "project_type": project_type,
                     "dominant_type": dominant_type,
-                    "is_doing_now_conflict": item["is_doing_now_conflict"],
+                    "is_focus_conflict": item["is_focus_conflict"],
                 },
             }
 
         summary = {
             "open_tasks": len(open_tasks),
             "next_action_count": sum(1 for t in open_tasks if t["has_next_action"]),
-            "doing_now_count": len(doing_now_tasks),
-            "doing_now_conflicts": max(0, len(doing_now_tasks) - 1),
+            "focus_count": len(focus_tasks),
+            "focus_conflicts": max(0, len(focus_tasks) - 1),
         }
 
         return {
             "generated_at": _iso_now(),
             "labels": {
                 "next_action_label": next_action_label,
-                "doing_now_label": doing_now_label,
+                "focus_label": focus_label,
             },
             "summary": summary,
             "conflicts": {
-                "doing_now": [
+                "focus": [
                     {"id": t["id"], "content": t["content"], "updated_at": t["updated_at"]}
-                    for t in doing_now_tasks
+                    for t in focus_tasks
                 ],
             },
             "tasks": open_tasks,
         }
 
     def pick_winner(
-        doing_now_tasks: List[Dict[str, Any]],
+        focus_tasks: List[Dict[str, Any]],
         preferred_task_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         winner = choose_singleton_winner(
-            doing_now_tasks,
+            focus_tasks,
             preferred_task_id=preferred_task_id,
         )
         if winner is None:
@@ -566,9 +566,9 @@ def create_app(
         state: Dict[str, Any],
         preferred_task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        doing_now_tasks = [t for t in state["tasks"] if t["has_doing_now"]]
-        if len(doing_now_tasks) <= 1:
-            winner = doing_now_tasks[0] if doing_now_tasks else None
+        focus_tasks = [t for t in state["tasks"] if t["has_focus"]]
+        if len(focus_tasks) <= 1:
+            winner = focus_tasks[0] if focus_tasks else None
             return {
                 "ok": True,
                 "generated_at": state["generated_at"],
@@ -582,13 +582,13 @@ def create_app(
                 "message": "No conflict detected.",
             }
 
-        winner = pick_winner(doing_now_tasks, preferred_task_id)
+        winner = pick_winner(focus_tasks, preferred_task_id)
         assert winner is not None
-        losers = [t for t in doing_now_tasks if t["id"] != winner["id"]]
+        losers = [t for t in focus_tasks if t["id"] != winner["id"]]
 
         updates = []
         for task in losers:
-            new_labels = [l for l in task["labels"] if l != doing_now_label]
+            new_labels = [l for l in task["labels"] if l != focus_label]
             updates.append(
                 {
                     "task_id": task["id"],
@@ -693,8 +693,8 @@ def create_app(
         except requests.RequestException as exc:
             return jsonify({"error": f"Todoist API request error: {exc}"}), 502
 
-    @app.get("/api/doing-now/reconcile-preview")
-    def reconcile_doing_now_preview():
+    @app.get("/api/focus/reconcile-preview")
+    def reconcile_focus_preview():
         winner_task_id = request.args.get("winner_task_id")
         try:
             state = fetch_state()
@@ -705,8 +705,8 @@ def create_app(
         except requests.RequestException as exc:
             return jsonify({"error": f"Todoist API request error: {exc}"}), 502
 
-    @app.post("/api/doing-now/reconcile")
-    def reconcile_doing_now():
+    @app.post("/api/focus/reconcile")
+    def reconcile_focus():
         try:
             body = request.get_json(silent=True) or {}
             apply_changes = bool(body.get("apply", False))
@@ -765,8 +765,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Label name treated as next-action",
     )
     parser.add_argument(
-        "--doing-now-label",
-        default="doing_now",
+        "--focus-label",
+        default="focus",
         help="Label name treated as singleton focus label",
     )
     return parser.parse_args(argv)
@@ -777,7 +777,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     app = create_app(
         api_token=args.api_key,
         next_action_label=args.next_action_label,
-        doing_now_label=args.doing_now_label,
+        focus_label=args.focus_label,
     )
     app.run(host=args.host, port=args.port, debug=False)
     return 0

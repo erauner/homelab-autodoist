@@ -146,7 +146,7 @@ All configuration can be set via environment variables for containerized deploym
 | `AUTODOIST_P_SUFFIX` | Parallel suffix character | `=` |
 | `AUTODOIST_S_SUFFIX` | Sequential suffix character | `-` |
 | `AUTODOIST_HIDE_FUTURE` | Days to hide future tasks | 0 |
-| `AUTODOIST_DOING_NOW_LABEL` | Singleton label to enforce (keeps only one active task) | - |
+| `AUTODOIST_FOCUS_LABEL` | Singleton label to enforce (keeps only one active task) | - |
 | `AUTODOIST_ONETIME` | Run once and exit | false |
 | `AUTODOIST_DEBUG` | Enable debug logging | false |
 | `AUTODOIST_DB_PATH` | Path to SQLite database | metadata.sqlite |
@@ -174,10 +174,10 @@ In addition, if you experience issues with syncing you can increase the api sync
 python -m autodoist --delay <time in seconds>
 ```
 
-To enforce a singleton focus label (`doing_now`) across all active tasks:
+To enforce a singleton focus label (`focus`) across all active tasks:
 
 ```bash
-python -m autodoist --doing-now-label doing_now
+python -m autodoist --focus-label focus
 ```
 
 For all arguments, please check out the help:
@@ -225,7 +225,7 @@ python -m autodoist.webui --api-key <API_KEY>
 Optional arguments:
 
 ```bash
-autodoist-webui --host 127.0.0.1 --port 8080 --next-action-label next_action --doing-now-label doing_now
+autodoist-webui --host 127.0.0.1 --port 8080 --next-action-label next_action --focus-label focus
 ```
 
 Then open:
@@ -235,19 +235,19 @@ Then open:
 Useful API endpoints:
 
 - `GET /api/health` - simple health check
-- `GET /api/state` - full snapshot with tasks, labels, counts, and detected `doing_now` conflicts
-- `GET /api/explain` - per-task reason codes for `next_action` and `doing_now` decisions
-- `GET /api/tasks?label=doing_now` - filter tasks by label
+- `GET /api/state` - full snapshot with tasks, labels, counts, and detected `focus` conflicts
+- `GET /api/explain` - per-task reason codes for `next_action` and `focus` decisions
+- `GET /api/tasks?label=focus` - filter tasks by label
 - `GET /api/tasks?contains=foo` - filter tasks by content
-- `GET /api/doing-now/reconcile-preview` - preview winner/losers and exact label diffs before apply
-- `POST /api/doing-now/reconcile` - dry-run or apply singleton reconciliation
+- `GET /api/focus/reconcile-preview` - preview winner/losers and exact label diffs before apply
+- `POST /api/focus/reconcile` - dry-run or apply singleton reconciliation
 
 Reconcile examples:
 
 Dry-run (no changes):
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+curl -X POST http://127.0.0.1:8080/api/focus/reconcile \
   -H 'Content-Type: application/json' \
   -d '{"apply": false}'
 ```
@@ -255,7 +255,7 @@ curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
 Apply conflict resolution:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+curl -X POST http://127.0.0.1:8080/api/focus/reconcile \
   -H 'Content-Type: application/json' \
   -d '{"apply": true}'
 ```
@@ -263,7 +263,7 @@ curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
 Force a winner task id:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/doing-now/reconcile \
+curl -X POST http://127.0.0.1:8080/api/focus/reconcile \
   -H 'Content-Type: application/json' \
   -d '{"apply": true, "winner_task_id": "1234567890"}'
 ```
