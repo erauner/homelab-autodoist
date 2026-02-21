@@ -236,6 +236,7 @@ Useful API endpoints:
 
 - `GET /api/health` - simple health check
 - `GET /api/state` - full snapshot with tasks, labels, counts, and detected `doing_now` conflicts
+- `GET /api/explain` - per-task reason codes for `next_action` and `doing_now` decisions
 - `GET /api/tasks?label=doing_now` - filter tasks by label
 - `GET /api/tasks?contains=foo` - filter tasks by content
 - `POST /api/doing-now/reconcile` - dry-run or apply singleton reconciliation

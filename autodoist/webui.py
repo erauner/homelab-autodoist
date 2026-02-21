@@ -339,6 +339,23 @@ def _as_list(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _parse_default_type_suffix(name: Optional[str], width: int) -> Optional[str]:
+    if not name:
+        return None
+    suffix = ""
+    for ch in reversed(name):
+        if ch not in ("-", "="):
+            break
+        suffix = ch + suffix
+        if len(suffix) == width:
+            break
+    if not suffix:
+        return None
+    if len(suffix) < width:
+        suffix += suffix[-1] * (width - len(suffix))
+    return "".join("s" if ch == "-" else "p" for ch in suffix)
+
+
 def create_app(
     api_token: str,
     next_action_label: str = "next_action",
@@ -397,6 +414,72 @@ def create_app(
         if len(doing_now_tasks) > 1:
             for item in doing_now_tasks:
                 item["is_doing_now_conflict"] = True
+        winner = choose_singleton_winner(doing_now_tasks)
+        winner_task_id = str(winner["id"]) if isinstance(winner, dict) and winner.get("id") is not None else None
+
+        for item in open_tasks:
+            is_header = (item.get("content") or "").startswith("*")
+            section_name = item.get("section_name")
+            section_disabled = bool(section_name) and (section_name.startswith("*") or section_name.endswith("*"))
+            project_type = _parse_default_type_suffix(item.get("project_name"), 3)
+            section_type = _parse_default_type_suffix(section_name, 2)
+            task_type = _parse_default_type_suffix(item.get("content"), 1)
+            dominant_type = task_type or section_type or project_type
+
+            if item["has_next_action"]:
+                na_code = "label_present_on_active_task"
+                na_message = "Task currently has next_action label."
+            elif is_header:
+                na_code = "header_task_not_actionable"
+                na_message = "Task is a header (`*`) and is treated as non-actionable."
+            elif section_disabled:
+                na_code = "section_labeling_disabled"
+                na_message = "Task section is disabled for automatic labeling."
+            elif dominant_type is None:
+                na_code = "no_type_suffix_detected"
+                na_message = "No sequential/parallel type suffix detected in project/section/task."
+            else:
+                na_code = "not_selected_by_ordering_or_rules"
+                na_message = "Task is currently not selected by sequential/parallel labeling rules."
+
+            if item["has_doing_now"] and item["is_doing_now_conflict"] and winner_task_id == item["id"]:
+                dn_code = "singleton_conflict_winner"
+                dn_message = "Task is the chosen singleton winner among conflicting doing_now labels."
+            elif item["has_doing_now"] and item["is_doing_now_conflict"]:
+                dn_code = "singleton_conflict_loser"
+                dn_message = "Task currently has doing_now but is a losing task in singleton conflict."
+            elif item["has_doing_now"]:
+                dn_code = "singleton_holder"
+                dn_message = "Task currently holds doing_now and no conflict is detected."
+            elif winner_task_id is not None:
+                dn_code = "singleton_assigned_to_other_task"
+                dn_message = f"Another task ({winner_task_id}) currently holds doing_now."
+            else:
+                dn_code = "not_labeled"
+                dn_message = "Task does not have doing_now label."
+
+            item["explain"] = {
+                "next_action": {
+                    "has_label": item["has_next_action"],
+                    "reason_code": na_code,
+                    "reason": na_message,
+                },
+                "doing_now": {
+                    "has_label": item["has_doing_now"],
+                    "reason_code": dn_code,
+                    "reason": dn_message,
+                    "winner_task_id": winner_task_id,
+                },
+                "signals": {
+                    "is_header_task": is_header,
+                    "section_disabled": section_disabled,
+                    "task_type": task_type,
+                    "section_type": section_type,
+                    "project_type": project_type,
+                    "dominant_type": dominant_type,
+                    "is_doing_now_conflict": item["is_doing_now_conflict"],
+                },
+            }
 
         summary = {
             "open_tasks": len(open_tasks),
@@ -470,6 +553,40 @@ def create_app(
                 "count": len(tasks),
                 "tasks": tasks,
             })
+        except requests.HTTPError as exc:
+            return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
+        except requests.RequestException as exc:
+            return jsonify({"error": f"Todoist API request error: {exc}"}), 502
+
+    @app.get("/api/explain")
+    def api_explain():
+        task_id = request.args.get("task_id")
+        try:
+            state = fetch_state()
+            tasks = state["tasks"]
+            if task_id:
+                tasks = [t for t in tasks if str(t.get("id")) == str(task_id)]
+
+            explained = [
+                {
+                    "id": t["id"],
+                    "content": t["content"],
+                    "project_name": t["project_name"],
+                    "section_name": t["section_name"],
+                    "labels": t["labels"],
+                    "explain": t.get("explain", {}),
+                }
+                for t in tasks
+            ]
+            return jsonify(
+                {
+                    "generated_at": state["generated_at"],
+                    "labels": state["labels"],
+                    "summary": state["summary"],
+                    "count": len(explained),
+                    "tasks": explained,
+                }
+            )
         except requests.HTTPError as exc:
             return jsonify({"error": f"Todoist API HTTP error: {exc}"}), 502
         except requests.RequestException as exc:
