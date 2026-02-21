@@ -9,10 +9,11 @@ for projects, sections, and tasks.
 """
 
 from __future__ import annotations
+import json
 import logging
 import os
 import sqlite3
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .types import EntityKind
@@ -65,6 +66,36 @@ CREATE INDEX IF NOT EXISTS idx_singleton_label_state_active
 ON singleton_label_state(label_name, is_active);
 """
 
+_CREATE_FOCUS_HISTORY_TABLE = """
+CREATE TABLE IF NOT EXISTS focus_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label_name TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    assigned_at INTEGER NOT NULL,
+    cleared_at INTEGER,
+    assigned_source TEXT,
+    cleared_source TEXT,
+    assigned_reason TEXT,
+    cleared_reason TEXT,
+    meta_json TEXT
+);
+"""
+
+_CREATE_FOCUS_HISTORY_LABEL_ASSIGNED_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_focus_history_label_assigned_at
+ON focus_history(label_name, assigned_at DESC);
+"""
+
+_CREATE_FOCUS_HISTORY_TASK_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_focus_history_task
+ON focus_history(task_id);
+"""
+
+_CREATE_FOCUS_HISTORY_OPEN_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_focus_history_open_sessions
+ON focus_history(label_name, cleared_at);
+"""
+
 
 class MetadataDB:
     """
@@ -93,7 +124,10 @@ class MetadataDB:
     def connect(self) -> None:
         """Open database connection and initialize schema."""
         try:
-            self._conn = sqlite3.connect(self.db_path)
+            self._conn = sqlite3.connect(self.db_path, timeout=30)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
             logging.debug("Connected to SQLite DB: %s", self.db_path)
             self._init_schema()
             self._migrate_legacy_tables()
@@ -129,6 +163,10 @@ class MetadataDB:
         cursor.execute(_CREATE_INDEX)
         cursor.execute(_CREATE_SINGLETON_LABEL_STATE_TABLE)
         cursor.execute(_CREATE_SINGLETON_LABEL_STATE_INDEX)
+        cursor.execute(_CREATE_FOCUS_HISTORY_TABLE)
+        cursor.execute(_CREATE_FOCUS_HISTORY_LABEL_ASSIGNED_INDEX)
+        cursor.execute(_CREATE_FOCUS_HISTORY_TASK_INDEX)
+        cursor.execute(_CREATE_FOCUS_HISTORY_OPEN_INDEX)
         self.conn.commit()
         logging.debug("Database schema initialized")
     
@@ -334,6 +372,178 @@ class MetadataDB:
             )
         if self.auto_commit:
             self.conn.commit()
+
+    def get_singleton_assigned_at_map(self, label_name: str, task_ids: list[str]) -> dict[str, Optional[int]]:
+        """Bulk fetch assigned-at values for a label/task set."""
+        if not task_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(task_ids))
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT task_id, assigned_at
+            FROM singleton_label_state
+            WHERE label_name = ? AND task_id IN ({placeholders})
+            """,
+            [label_name, *[str(tid) for tid in task_ids]],
+        )
+        result: dict[str, Optional[int]] = {}
+        for task_id, assigned_at in cursor.fetchall():
+            result[str(task_id)] = int(assigned_at) if assigned_at is not None else None
+        return result
+
+    def start_singleton_session(
+        self,
+        label_name: str,
+        task_id: str,
+        *,
+        assigned_at: int,
+        source: str,
+        reason: Optional[str] = None,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Open a focus session if none is currently open for this label/task."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id
+            FROM focus_history
+            WHERE label_name = ? AND task_id = ? AND cleared_at IS NULL
+            ORDER BY assigned_at DESC, id DESC
+            LIMIT 1
+            """,
+            (label_name, str(task_id)),
+        )
+        if cursor.fetchone():
+            return
+        meta_json = json.dumps(meta, sort_keys=True) if meta is not None else None
+        cursor.execute(
+            """
+            INSERT INTO focus_history (
+                label_name,
+                task_id,
+                assigned_at,
+                assigned_source,
+                assigned_reason,
+                meta_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (label_name, str(task_id), int(assigned_at), source, reason, meta_json),
+        )
+        if self.auto_commit:
+            self.conn.commit()
+
+    def end_singleton_session(
+        self,
+        label_name: str,
+        task_id: str,
+        *,
+        cleared_at: int,
+        source: str,
+        reason: Optional[str] = None,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Close the latest open focus session for this label/task, if any."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id
+            FROM focus_history
+            WHERE label_name = ? AND task_id = ? AND cleared_at IS NULL
+            ORDER BY assigned_at DESC, id DESC
+            LIMIT 1
+            """,
+            (label_name, str(task_id)),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return
+        session_id = int(row[0])
+        meta_json = json.dumps(meta, sort_keys=True) if meta is not None else None
+        cursor.execute(
+            """
+            UPDATE focus_history
+            SET cleared_at = ?,
+                cleared_source = ?,
+                cleared_reason = ?,
+                meta_json = COALESCE(?, meta_json)
+            WHERE id = ?
+            """,
+            (int(cleared_at), source, reason, meta_json, session_id),
+        )
+        if self.auto_commit:
+            self.conn.commit()
+
+    def list_singleton_history(
+        self,
+        label_name: str,
+        *,
+        task_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return focus sessions ordered by most recent assignment time."""
+        safe_limit = max(1, int(limit))
+        cursor = self.conn.cursor()
+        if task_id is None:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    label_name,
+                    task_id,
+                    assigned_at,
+                    cleared_at,
+                    assigned_source,
+                    cleared_source,
+                    assigned_reason,
+                    cleared_reason,
+                    meta_json
+                FROM focus_history
+                WHERE label_name = ?
+                ORDER BY assigned_at DESC, id DESC
+                LIMIT ?
+                """,
+                (label_name, safe_limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    label_name,
+                    task_id,
+                    assigned_at,
+                    cleared_at,
+                    assigned_source,
+                    cleared_source,
+                    assigned_reason,
+                    cleared_reason,
+                    meta_json
+                FROM focus_history
+                WHERE label_name = ? AND task_id = ?
+                ORDER BY assigned_at DESC, id DESC
+                LIMIT ?
+                """,
+                (label_name, str(task_id), safe_limit),
+            )
+
+        rows = []
+        for row in cursor.fetchall():
+            rows.append(
+                {
+                    "id": int(row[0]),
+                    "label_name": str(row[1]),
+                    "task_id": str(row[2]),
+                    "assigned_at": int(row[3]),
+                    "cleared_at": int(row[4]) if row[4] is not None else None,
+                    "assigned_source": row[5],
+                    "cleared_source": row[6],
+                    "assigned_reason": row[7],
+                    "cleared_reason": row[8],
+                    "meta": json.loads(row[9]) if row[9] else None,
+                }
+            )
+        return rows
 
 
 def open_db(db_path: str = "metadata.sqlite") -> MetadataDB:

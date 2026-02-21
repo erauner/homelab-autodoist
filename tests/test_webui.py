@@ -1,4 +1,6 @@
 from copy import deepcopy
+import os
+import tempfile
 
 from autodoist.webui import create_app
 
@@ -94,14 +96,19 @@ def sample_data():
     return tasks, projects, sections
 
 
-def build_client(monkeypatch, wrapped=False):
+def build_client(monkeypatch, wrapped=False, db_path=None):
     tasks, projects, sections = sample_data()
     fake_session = FakeSession(tasks, projects, sections, wrapped=wrapped)
     monkeypatch.setattr("autodoist.webui.requests.Session", lambda: fake_session)
+    if db_path is None:
+        fd, generated_path = tempfile.mkstemp(prefix="autodoist-webui-test-", suffix=".sqlite")
+        os.close(fd)
+        db_path = generated_path
     app = create_app(
         api_token="test-token",
         next_action_label="next_action",
         focus_label="focus",
+        db_path=str(db_path) if db_path is not None else None,
     )
     return app.test_client(), fake_session
 
@@ -182,6 +189,51 @@ def test_task_action_set_focus(monkeypatch):
     write_calls = [c for c in fake_session.post_calls if c["url"].endswith("/tasks/1003")]
     assert len(write_calls) == 1
     assert "focus" in write_calls[0]["json"]["labels"]
+
+
+def test_focus_history_records_actions(monkeypatch, tmp_path):
+    db_path = tmp_path / "metadata.sqlite"
+    client, _ = build_client(monkeypatch, db_path=db_path)
+
+    response = client.post("/api/tasks/1003/labels", json={"action": "set_focus"})
+    assert response.status_code == 200
+
+    response = client.post("/api/tasks/1003/labels", json={"action": "clear_focus"})
+    assert response.status_code == 200
+
+    response = client.get("/api/focus/history")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["count"] >= 1
+    assert any(s["task_id"] == "1003" and s["cleared_at"] is not None for s in payload["sessions"])
+
+
+def test_focus_history_open_only(monkeypatch, tmp_path):
+    db_path = tmp_path / "metadata.sqlite"
+    client, _ = build_client(monkeypatch, db_path=db_path)
+    response = client.post("/api/tasks/1003/labels", json={"action": "set_focus"})
+    assert response.status_code == 200
+
+    response = client.get("/api/focus/history?open_only=true")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["open_only"] is True
+    assert all(s["still_open"] is True for s in payload["sessions"])
+
+
+def test_focus_history_by_task(monkeypatch, tmp_path):
+    db_path = tmp_path / "metadata.sqlite"
+    client, _ = build_client(monkeypatch, db_path=db_path)
+    response = client.post("/api/tasks/1003/labels", json={"action": "set_focus"})
+    assert response.status_code == 200
+
+    response = client.get("/api/focus/history/1003")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["task_id"] == "1003"
+    assert payload["count"] >= 1
 
 
 def test_task_action_clear_focus(monkeypatch):
