@@ -185,6 +185,9 @@ DASHBOARD_HTML = """
     .actions button { padding: 4px 8px; font-size: 0.78rem; }
     .view-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px 0; }
     .view-controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .inline-controls { display: flex; gap: 10px; align-items: center; margin: 8px 0; font-size: 0.9rem; color: var(--muted); }
+    .history-list { margin: 8px 0 0 0; padding-left: 18px; }
+    .history-list li { margin-bottom: 6px; }
 
     @media (max-width: 800px) {
       .hide-mobile { display: none; }
@@ -216,6 +219,14 @@ DASHBOARD_HTML = """
     <div class="card" id="reconcilePreview">
       <div class="k">Reconcile Preview</div>
       <div id="previewBody" class="preview-meta">Loading preview...</div>
+    </div>
+    <div class="card" id="focusHistory">
+      <div class="k">Focus History</div>
+      <div class="inline-controls">
+        <label><input type="checkbox" id="focusHistoryOpenOnly" checked onchange="loadFocusHistory()"> Open tasks only</label>
+        <button onclick="loadFocusHistory()">Refresh history</button>
+      </div>
+      <div id="focusHistoryBody" class="preview-meta">Loading focus history...</div>
     </div>
 
     <table>
@@ -361,6 +372,42 @@ DASHBOARD_HTML = """
       `;
     }
 
+    function renderFocusHistory(payload) {
+      const el = document.getElementById('focusHistoryBody');
+      if (!payload || payload.ok !== true) {
+        el.textContent = 'Focus history unavailable.';
+        return;
+      }
+      const sessions = payload.sessions || [];
+      if (!sessions.length) {
+        el.textContent = 'No focus history found for current filter.';
+        return;
+      }
+      const rows = sessions.map((s) => {
+        const assigned = new Date(s.assigned_at).toLocaleString();
+        const cleared = s.cleared_at ? new Date(s.cleared_at).toLocaleString() : 'active';
+        const content = s.content || '(task not currently open)';
+        return `<li><span class="mono">${esc(s.task_id)}</span> ${esc(content)}<br><span class="mono">assigned:</span> ${esc(assigned)} · <span class="mono">cleared:</span> ${esc(cleared)}</li>`;
+      }).join('');
+      el.innerHTML = `<div>${esc(sessions.length)} session(s)</div><ul class="history-list">${rows}</ul>`;
+    }
+
+    async function loadFocusHistory() {
+      try {
+        const openOnly = document.getElementById('focusHistoryOpenOnly').checked;
+        const params = new URLSearchParams({
+          open_only: openOnly ? 'true' : 'false',
+          limit: '20'
+        });
+        const res = await fetch(`${apiBase}/focus/history?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        renderFocusHistory(data);
+      } catch (err) {
+        setStatus(`Focus history error: ${err.message}`, 'err');
+      }
+    }
+
     async function loadReconcilePreview() {
       try {
         const res = await fetch(`${apiBase}/focus/reconcile-preview`);
@@ -383,6 +430,7 @@ DASHBOARD_HTML = """
         renderSummary(state.summary);
         renderCurrentView();
         await loadReconcilePreview();
+        await loadFocusHistory();
       } catch (err) {
         setStatus(`Error loading state: ${err.message}`, 'err');
       }
