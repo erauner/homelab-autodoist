@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from flask import Flask, jsonify, render_template_string, request
+from .singleton import choose_singleton_winner
 
 TODOIST_API_V1_BASE = "https://api.todoist.com/api/v1"
 
@@ -320,20 +321,6 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_iso(value: Optional[str]) -> datetime:
-    if not value:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
-    try:
-        if value.endswith("Z"):
-            value = value.replace("Z", "+00:00")
-        parsed = datetime.fromisoformat(value)
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    except ValueError:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
-
-
 def _as_list(payload: Any) -> List[Dict[str, Any]]:
     """
     Normalize Todoist API payloads into a list of objects.
@@ -438,20 +425,13 @@ def create_app(
         doing_now_tasks: List[Dict[str, Any]],
         preferred_task_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not doing_now_tasks:
-            return None
-
-        if preferred_task_id is not None:
-            for task in doing_now_tasks:
-                if task["id"] == preferred_task_id:
-                    return task
-
-        ranked = sorted(
+        winner = choose_singleton_winner(
             doing_now_tasks,
-            key=lambda t: (_parse_iso(t.get("updated_at")), int(t["id"])),
-            reverse=True,
+            preferred_task_id=preferred_task_id,
         )
-        return ranked[0]
+        if winner is None:
+            return None
+        return winner if isinstance(winner, dict) else None
 
     @app.get("/")
     def index() -> str:

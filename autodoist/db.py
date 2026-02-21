@@ -50,6 +50,21 @@ INSERT OR IGNORE INTO entities (entity_kind, entity_id, type_str, parent_type)
 SELECT 'task', CAST(task_id AS TEXT), task_type, parent_type FROM tasks;
 """
 
+_CREATE_SINGLETON_LABEL_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS singleton_label_state (
+    label_name TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    assigned_at INTEGER,
+    PRIMARY KEY (label_name, task_id)
+);
+"""
+
+_CREATE_SINGLETON_LABEL_STATE_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_singleton_label_state_active
+ON singleton_label_state(label_name, is_active);
+"""
+
 
 class MetadataDB:
     """
@@ -112,6 +127,8 @@ class MetadataDB:
         cursor = self.conn.cursor()
         cursor.execute(_CREATE_ENTITIES_TABLE)
         cursor.execute(_CREATE_INDEX)
+        cursor.execute(_CREATE_SINGLETON_LABEL_STATE_TABLE)
+        cursor.execute(_CREATE_SINGLETON_LABEL_STATE_INDEX)
         self.conn.commit()
         logging.debug("Database schema initialized")
     
@@ -251,6 +268,70 @@ class MetadataDB:
             """,
             (str(task_id),)
         )
+        if self.auto_commit:
+            self.conn.commit()
+
+    def get_active_singleton_tasks(self, label_name: str) -> list[str]:
+        """Return task IDs currently active for a singleton label."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT task_id
+            FROM singleton_label_state
+            WHERE label_name = ? AND is_active = 1
+            """,
+            (label_name,),
+        )
+        return [str(row[0]) for row in cursor.fetchall()]
+
+    def get_singleton_assigned_at(self, label_name: str, task_id: str) -> Optional[int]:
+        """Return stored assigned-at epoch milliseconds for a singleton label task."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT assigned_at
+            FROM singleton_label_state
+            WHERE label_name = ? AND task_id = ?
+            """,
+            (label_name, str(task_id)),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return int(row[0]) if row[0] is not None else None
+
+    def set_singleton_state(
+        self,
+        label_name: str,
+        task_id: str,
+        *,
+        is_active: bool,
+        assigned_at: Optional[int] = None,
+    ) -> None:
+        """Upsert singleton label state for a task."""
+        if assigned_at is None:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO singleton_label_state (label_name, task_id, is_active)
+                VALUES (?, ?, ?)
+                ON CONFLICT(label_name, task_id) DO UPDATE
+                SET is_active = excluded.is_active
+                """,
+                (label_name, str(task_id), 1 if is_active else 0),
+            )
+        else:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO singleton_label_state (label_name, task_id, is_active, assigned_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(label_name, task_id) DO UPDATE
+                SET is_active = excluded.is_active,
+                    assigned_at = excluded.assigned_at
+                """,
+                (label_name, str(task_id), 1 if is_active else 0, int(assigned_at)),
+            )
         if self.auto_commit:
             self.conn.commit()
 
