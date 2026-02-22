@@ -32,12 +32,14 @@ DASHBOARD_HTML = """
     :root {
       --bg: #f7f6f2;
       --panel: #fffdf8;
+      --panel-soft: #f6f3ed;
       --ink: #1f2a33;
       --muted: #667784;
       --accent: #0d6d66;
       --warn: #b85c00;
       --danger: #b42318;
       --border: #d8d2c5;
+      --border-strong: #c8bfad;
       --ok: #0f8f4e;
     }
 
@@ -81,9 +83,9 @@ DASHBOARD_HTML = """
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.04);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 8px 22px rgba(31, 42, 51, 0.06);
     }
 
     .k {
@@ -114,6 +116,16 @@ DASHBOARD_HTML = """
       border-radius: 8px;
       cursor: pointer;
       font-weight: 600;
+      transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+    }
+
+    button:hover {
+      background: #f8f6f1;
+      border-color: var(--border-strong);
+    }
+
+    button:active {
+      transform: translateY(1px);
     }
 
     button.primary {
@@ -140,6 +152,10 @@ DASHBOARD_HTML = """
       margin: 6px 0 0 0;
       color: var(--muted);
       font-size: 0.9rem;
+    }
+
+    #reconcilePreview, #focusHistory {
+      margin-bottom: 12px;
     }
 
     table {
@@ -182,16 +198,26 @@ DASHBOARD_HTML = """
 
     .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    .actions button { padding: 4px 8px; font-size: 0.78rem; }
+    .actions button { padding: 5px 9px; font-size: 0.78rem; }
     .view-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px 0; }
     .view-controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
     .inline-controls { display: flex; gap: 10px; align-items: center; margin: 8px 0; font-size: 0.9rem; color: var(--muted); }
-    .history-list { margin: 8px 0 0 0; padding-left: 18px; }
-    .history-list li { margin-bottom: 6px; }
+    .inline-controls label { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-soft); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; }
+    .inline-controls select { border: 1px solid var(--border-strong); border-radius: 8px; background: white; padding: 4px 6px; }
+    .history-list { margin: 10px 0 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+    .history-item { border: 1px solid var(--border); background: var(--panel-soft); border-radius: 12px; padding: 10px 12px; }
+    .history-item-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+    .history-item-title { font-weight: 600; color: var(--ink); }
+    .history-item-meta { color: var(--muted); font-size: 0.9rem; }
+    .history-item-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .history-link { color: #0f4cbf; text-decoration: none; font-weight: 600; }
+    .history-link:hover { text-decoration: underline; }
+    .history-count { font-weight: 700; color: var(--ink); margin-bottom: 8px; }
 
     @media (max-width: 800px) {
       .hide-mobile { display: none; }
       h1 { font-size: 1.45rem; }
+      .inline-controls { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
@@ -400,9 +426,21 @@ DASHBOARD_HTML = """
         const focusBtn = s.still_open
           ? `<button onclick="setFocusFromHistory('${esc(s.task_id)}')">Set as focus</button>`
           : '';
-        return `<li><span class="mono">${esc(s.task_id)}</span> ${esc(content)}<br><span class="mono">assigned:</span> ${esc(assigned)} · <span class="mono">cleared:</span> ${esc(cleared)}<br><a href="${todoistUrl}" target="_blank" rel="noopener noreferrer">Open in Todoist</a> ${focusBtn}</li>`;
+        return `
+          <li class="history-item">
+            <div class="history-item-head">
+              <span class="mono">${esc(s.task_id)}</span>
+              <span class="history-item-title">${esc(content)}</span>
+            </div>
+            <div class="history-item-meta"><span class="mono">assigned:</span> ${esc(assigned)} · <span class="mono">cleared:</span> ${esc(cleared)}</div>
+            <div class="history-item-actions">
+              <a class="history-link" href="${todoistUrl}" target="_blank" rel="noopener noreferrer">Open in Todoist</a>
+              ${focusBtn}
+            </div>
+          </li>
+        `;
       }).join('');
-      el.innerHTML = `<div>${esc(sessions.length)} session(s)</div><ul class="history-list">${rows}</ul>`;
+      el.innerHTML = `<div class="history-count">${esc(sessions.length)} session(s)</div><ul class="history-list">${rows}</ul>`;
     }
 
     async function loadFocusHistory() {
