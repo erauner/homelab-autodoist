@@ -394,7 +394,7 @@ class LabelingEngine:
             logging.debug("Project '%s' identified as %s type", project.name, project_type)
         
         # Get tasks for this project
-        project_tasks = [t for t in all_tasks if t.project_id == project.id]
+        project_tasks = [t for t in all_tasks if self._same_id(t.project_id, project.id)]
         
         # If project type changed, clean all tasks in project
         if project_type_changed:
@@ -404,7 +404,7 @@ class LabelingEngine:
         
         # Get sections for this project (plus NoSection for sectionless tasks)
         sections: list[Section | NoSection] = [
-            s for s in all_sections if s.project_id == project.id
+            s for s in all_sections if self._same_id(s.project_id, project.id)
         ]
         sections.insert(0, NoSection(project.id))
         
@@ -457,7 +457,7 @@ class LabelingEngine:
                 )
         
         # Get tasks for this section
-        section_tasks = [t for t in project_tasks if t.section_id == section.id]
+        section_tasks = [t for t in project_tasks if self._same_id(t.section_id, section.id)]
 
         # Normalize parent_id for sorting: SDK v3.x uses None for parentless tasks.
         # We mutate to '' (empty string) so parentless tasks sort first.
@@ -514,8 +514,8 @@ class LabelingEngine:
         self.db.ensure_entity('task', str(task.id))
         
         # Get child tasks
-        child_tasks_all = [t for t in section_tasks if t.parent_id == task.id]
-        child_tasks = [t for t in non_completed if t.parent_id == task.id]
+        child_tasks_all = [t for t in section_tasks if self._same_id(t.parent_id, task.id)]
+        child_tasks = [t for t in non_completed if self._same_id(t.parent_id, task.id)]
         
         # Check for header commands on task
         header_all_t, unheader_all_t, new_content = check_header_command(task)
@@ -782,7 +782,7 @@ class LabelingEngine:
         header: bool
     ) -> None:
         """Recursively add or remove header prefix from children."""
-        children = [t for t in section_tasks if t.parent_id == task.id]
+        children = [t for t in section_tasks if self._same_id(t.parent_id, task.id)]
         
         for child in children:
             if header:
@@ -834,6 +834,13 @@ class LabelingEngine:
             logging.debug("Removing label from '%s'", task.content)
             current.remove(label)
             self._desired_labels[task_id] = current
+
+    @staticmethod
+    def _same_id(left: Any, right: Any) -> bool:
+        """Compare Todoist IDs defensively across str/int SDK variants."""
+        if left is None or right is None:
+            return False
+        return str(left) == str(right)
 
     def _commit_label_changes(self) -> int:
         """
