@@ -839,7 +839,7 @@ class LabelingEngine:
     def _same_id(left: Any, right: Any) -> bool:
         """Compare Todoist IDs defensively across str/int SDK variants."""
         if left is None or right is None:
-            return False
+            return left is None and right is None
         return str(left) == str(right)
 
     def _commit_label_changes(self) -> int:
