@@ -677,7 +677,8 @@ class LabelingEngine:
         
         # Position 2: subtask-level behavior
         subtask_mode = dominant_type[2]
-        
+        parent_labels = self._get_current_labels(task)
+
         if subtask_mode == 's':
             # Sequential: label first non-completed child, remove from parent
             labeled_first = False
@@ -692,15 +693,17 @@ class LabelingEngine:
                 self.db.set_parent_type(str(child.id), subtask_mode)
                 
                 # Label first child if parent has label
-                if not labeled_first and not child.is_completed and label in task.labels:
+                if not labeled_first and not child.is_completed and label in parent_labels:
                     self._add_label(child, label)
                     self._remove_label(task, label)
+                    parent_labels = self._get_current_labels(task)
                     labeled_first = True
                     
         elif subtask_mode == 'p':
             # Parallel: label all children, remove from parent
-            if label in task.labels:
+            if label in parent_labels:
                 self._remove_label(task, label)
+                parent_labels = self._get_current_labels(task)
             
             for child in child_tasks:
                 if is_header_task(child.content):
