@@ -20,16 +20,26 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, tasks, projects, sections, wrapped=False):
+    def __init__(self, tasks, projects, sections, wrapped=False, task_pages=None):
         self.tasks = tasks
         self.projects = projects
         self.sections = sections
         self.wrapped = wrapped
+        self.task_pages = task_pages
         self.headers = {}
         self.post_calls = []
 
     def get(self, url, params=None, timeout=20):
         if url.endswith("/tasks"):
+            if self.task_pages is not None:
+                cursor = (params or {}).get("cursor")
+                if cursor is None:
+                    payload = deepcopy(self.task_pages[0])
+                    return FakeResponse({"results": payload, "next_cursor": "cursor-2"})
+                if cursor == "cursor-2":
+                    payload = deepcopy(self.task_pages[1])
+                    return FakeResponse({"results": payload})
+                return FakeResponse({"results": []})
             payload = deepcopy(self.tasks)
             return FakeResponse({"results": payload} if self.wrapped else payload)
         if url.endswith("/projects"):
@@ -136,6 +146,34 @@ def test_state_endpoint_includes_conflict_counts(monkeypatch):
     assert by_id["1001"]["explain"]["focus"]["reason_code"] == "singleton_conflict_loser"
     assert by_id["1003"]["explain"]["next_action"]["reason_code"] == "label_present_on_active_task"
     assert by_id["1003"]["explain"]["focus"]["reason_code"] == "singleton_assigned_to_other_task"
+
+
+def test_tasks_endpoint_follows_pagination_for_focus_label(monkeypatch, tmp_path):
+    tasks, projects, sections = sample_data()
+    first_page = [task for task in tasks if "focus" not in task.get("labels", [])]
+    second_page = [task for task in tasks if "focus" in task.get("labels", [])]
+    fake_session = FakeSession(
+        tasks=tasks,
+        projects=projects,
+        sections=sections,
+        wrapped=True,
+        task_pages=[first_page, second_page],
+    )
+    monkeypatch.setattr("autodoist.webui.requests.Session", lambda: fake_session)
+    app = create_app(
+        api_token="test-token",
+        next_action_label="next_action",
+        focus_label="focus",
+        db_path=str(tmp_path / "metadata.sqlite"),
+    )
+    client = app.test_client()
+
+    response = client.get("/api/tasks?label=focus")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 2
+    ids = {task["id"] for task in payload["tasks"]}
+    assert ids == {"1001", "1002"}
 
 
 def test_reconcile_dry_run_picks_most_recent_without_writing(monkeypatch):

@@ -639,6 +639,29 @@ def create_app(
         response.raise_for_status()
         return response.json()
 
+    def todoist_get_paginated(path: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Read all pages from Todoist v1 list endpoints.
+
+        /api/v1/tasks is paginated and defaults to a limited page size, so a
+        single request can miss focused tasks. This helper follows next_cursor.
+        """
+        all_rows: List[Dict[str, Any]] = []
+        next_cursor: Optional[str] = None
+        while True:
+            req_params: Dict[str, Any] = dict(params or {})
+            req_params.setdefault("limit", 200)
+            if next_cursor:
+                req_params["cursor"] = next_cursor
+            payload = todoist_get(path, req_params)
+            all_rows.extend(_as_list(payload))
+            if isinstance(payload, dict):
+                next_cursor = payload.get("next_cursor")
+                if next_cursor:
+                    continue
+            break
+        return all_rows
+
     def todoist_post(path: str, payload: Dict[str, Any]) -> Any:
         response = session.post(f"{TODOIST_API_V1_BASE}{path}", json=payload, timeout=20)
         response.raise_for_status()
@@ -706,9 +729,9 @@ def create_app(
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def fetch_state() -> Dict[str, Any]:
-        tasks = _as_list(todoist_get("/tasks"))
-        projects = _as_list(todoist_get("/projects"))
-        sections = _as_list(todoist_get("/sections"))
+        tasks = todoist_get_paginated("/tasks")
+        projects = todoist_get_paginated("/projects")
+        sections = todoist_get_paginated("/sections")
 
         project_by_id = {str(p["id"]): p.get("name") for p in projects}
         section_by_id = {str(s["id"]): s.get("name") for s in sections}
