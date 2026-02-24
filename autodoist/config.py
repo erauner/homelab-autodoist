@@ -5,6 +5,7 @@ Environment variables (primary for K8s/Docker):
   TODOIST_API_KEY    - Todoist API key (required)
   AUTODOIST_LABEL    - Label name for next actions
   AUTODOIST_FOCUS_LABEL - Singleton label name for focus reconciliation
+  AUTODOIST_BLOCKING_LABELS - Comma-separated labels that block next_action (default: waiting)
   AUTODOIST_DELAY    - Delay between syncs in seconds
   AUTODOIST_P_SUFFIX - Parallel suffix character
   AUTODOIST_S_SUFFIX - Sequential suffix character  
@@ -23,6 +24,18 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 
+def _parse_label_csv(raw_value: Optional[str]) -> tuple[str, ...]:
+    """Parse comma-separated labels into a normalized tuple."""
+    if not raw_value:
+        return ()
+    labels = []
+    for item in str(raw_value).split(","):
+        value = item.strip().lower()
+        if value and value not in labels:
+            labels.append(value)
+    return tuple(labels)
+
+
 @dataclass(frozen=True)
 class Config:
     """Runtime configuration for Autodoist."""
@@ -30,6 +43,7 @@ class Config:
     api_key: str
     label: Optional[str] = None
     focus_label: Optional[str] = None
+    blocking_labels: tuple[str, ...] = ("waiting",)
     delay: int = 5
     p_suffix: str = "="
     s_suffix: str = "-"
@@ -71,6 +85,11 @@ class Config:
                 args.focus_label
                 if args.focus_label is not None
                 else os.environ.get('AUTODOIST_FOCUS_LABEL')
+            ),
+            blocking_labels=_parse_label_csv(
+                args.blocking_labels
+                if args.blocking_labels is not None
+                else os.environ.get('AUTODOIST_BLOCKING_LABELS', 'waiting')
             ),
             delay=args.delay if args.delay is not None else int(os.environ.get('AUTODOIST_DELAY', '5')),
             p_suffix=args.p_suffix if args.p_suffix is not None else os.environ.get('AUTODOIST_P_SUFFIX', '='),
@@ -115,6 +134,13 @@ def _create_parser() -> argparse.ArgumentParser:
         '--focus_label', '--focus-label',
         dest='focus_label',
         help='Enable singleton label enforcement for this label name (e.g. focus)',
+        default=None,
+        type=str,
+    )
+    parser.add_argument(
+        '--blocking-labels',
+        dest='blocking_labels',
+        help='Comma-separated labels that block next_action (default: waiting)',
         default=None,
         type=str,
     )

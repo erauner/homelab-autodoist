@@ -24,6 +24,20 @@ def test_config_cli_overrides_focus_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert config.focus_label == "from_cli"
 
 
+def test_config_blocking_labels_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TODOIST_API_KEY", "test-token")
+    monkeypatch.delenv("AUTODOIST_BLOCKING_LABELS", raising=False)
+    config = Config.from_env_and_cli([])
+    assert config.blocking_labels == ("waiting",)
+
+
+def test_config_blocking_labels_cli_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TODOIST_API_KEY", "test-token")
+    monkeypatch.setenv("AUTODOIST_BLOCKING_LABELS", "hold")
+    config = Config.from_env_and_cli(["--blocking-labels", "waiting,blocked"])
+    assert config.blocking_labels == ("waiting", "blocked")
+
+
 def test_db_singleton_state_roundtrip(tmp_path) -> None:
     db = MetadataDB(str(tmp_path / "metadata.sqlite"), auto_commit=True)
     db.connect()

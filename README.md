@@ -147,6 +147,7 @@ All configuration can be set via environment variables for containerized deploym
 | `AUTODOIST_S_SUFFIX` | Sequential suffix character | `-` |
 | `AUTODOIST_HIDE_FUTURE` | Days to hide future tasks | 0 |
 | `AUTODOIST_FOCUS_LABEL` | Singleton label to enforce (keeps only one active task) | - |
+| `AUTODOIST_BLOCKING_LABELS` | Comma-separated labels that block `next_action` (for example `waiting`) | `waiting` |
 | `AUTODOIST_ONETIME` | Run once and exit | false |
 | `AUTODOIST_DEBUG` | Enable debug logging | false |
 | `AUTODOIST_DB_PATH` | Path to SQLite database | metadata.sqlite |
@@ -178,6 +179,12 @@ To enforce a singleton focus label (`focus`) across all active tasks:
 
 ```bash
 python -m autodoist --focus-label focus
+```
+
+To block `next_action` from tasks marked with wait-state labels:
+
+```bash
+python -m autodoist --blocking-labels waiting,blocked
 ```
 
 For all arguments, please check out the help:

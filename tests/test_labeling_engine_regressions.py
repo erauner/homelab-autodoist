@@ -108,3 +108,43 @@ def test_sectionless_parent_cascades_next_action_to_first_child_without_flipflop
         assert client.queued_updates == {"200": ["next_action"]}
     finally:
         db.close()
+
+
+def test_waiting_task_does_not_keep_next_action_and_next_task_is_labeled(tmp_path: Path) -> None:
+    project = MockProject(id=1, name="Work ---")
+    waiting_task = MockTask(
+        id="100",
+        content="Waiting on vendor",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=1,
+        labels=["waiting", "next_action"],
+    )
+    active_task = MockTask(
+        id="101",
+        content="Do work now",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=2,
+        labels=[],
+    )
+
+    client = MockClient([project], [waiting_task, active_task])
+    db = _open_test_db(tmp_path)
+    try:
+        engine = LabelingEngine(
+            client=client,
+            db=db,
+            config=Config(api_key="x", label="next_action", blocking_labels=("waiting",)),
+        )
+        changes = engine.run()
+
+        assert changes == 2
+        assert client.queued_updates == {
+            "100": ["waiting"],
+            "101": ["next_action"],
+        }
+    finally:
+        db.close()

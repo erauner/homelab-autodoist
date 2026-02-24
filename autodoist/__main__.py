@@ -48,7 +48,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         modes.append(f"Focus singleton: Enabled ({config.focus_label})")
     else:
         modes.append("Focus singleton: Disabled")
-    
+    if config.blocking_labels:
+        modes.append(
+            "Next action blocking labels: " + ", ".join(config.blocking_labels)
+        )
+
     logging.info("Running with the following configuration:\n  %s", "\n  ".join(modes))
     
     if not config.label and not config.focus_label:

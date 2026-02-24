@@ -545,6 +545,14 @@ class LabelingEngine:
                 self._remove_label(child, label)
                 self.db.clear_task_types(str(child.id))
             return
+
+        # Blocked tasks should not carry next_action and should not consume
+        # sequential "first found" slots.
+        if self._has_blocking_label(task):
+            self._remove_label(task, label)
+            for child in child_tasks_all:
+                self._remove_label(child, label)
+            return
         
         # Get task type
         task_type, task_type_changed = get_entity_type(
@@ -688,6 +696,8 @@ class LabelingEngine:
                 
                 # Remove label from all children first
                 self._remove_label(child, label)
+                if self._has_blocking_label(child):
+                    continue
                 
                 # Store parent type for child
                 self.db.set_parent_type(str(child.id), subtask_mode)
@@ -707,6 +717,9 @@ class LabelingEngine:
             
             for child in child_tasks:
                 if is_header_task(child.content):
+                    continue
+                if self._has_blocking_label(child):
+                    self._remove_label(child, label)
                     continue
                 
                 self.db.set_parent_type(str(child.id), subtask_mode)
@@ -820,6 +833,8 @@ class LabelingEngine:
 
     def _add_label(self, task: Task, label: str) -> None:
         """Track addition of a label to a task."""
+        if self._has_blocking_label(task):
+            return
         task_id = str(task.id)
         current = self._get_current_labels(task)
 
@@ -837,6 +852,14 @@ class LabelingEngine:
             logging.debug("Removing label from '%s'", task.content)
             current.remove(label)
             self._desired_labels[task_id] = current
+
+    def _has_blocking_label(self, task: Task) -> bool:
+        """Return True when task has a configured next_action-blocking label."""
+        blocking = set(self.config.blocking_labels)
+        if not blocking:
+            return False
+        labels = {str(value).strip().lower() for value in self._get_current_labels(task)}
+        return bool(labels & blocking)
 
     @staticmethod
     def _same_id(left: Any, right: Any) -> bool:
