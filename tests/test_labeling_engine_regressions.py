@@ -148,3 +148,135 @@ def test_waiting_task_does_not_keep_next_action_and_next_task_is_labeled(tmp_pat
         }
     finally:
         db.close()
+
+
+def test_parent_with_only_waiting_child_does_not_keep_next_action(tmp_path: Path) -> None:
+    project = MockProject(id=1, name="Work ---")
+    parent = MockTask(
+        id="100",
+        content="Follow up with vendor",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=1,
+        labels=["next_action"],
+    )
+    waiting_child = MockTask(
+        id="101",
+        content="Wait for callback",
+        project_id="1",
+        section_id=None,
+        parent_id="100",
+        order=1,
+        labels=["waiting"],
+    )
+
+    client = MockClient([project], [parent, waiting_child])
+    db = _open_test_db(tmp_path)
+    try:
+        engine = LabelingEngine(
+            client=client,
+            db=db,
+            config=Config(api_key="x", label="next_action", blocking_labels=("waiting",)),
+        )
+        changes = engine.run()
+
+        assert changes == 1
+        assert client.queued_updates == {"100": []}
+    finally:
+        db.close()
+
+
+def test_blocked_child_is_skipped_and_next_eligible_child_gets_next_action(tmp_path: Path) -> None:
+    project = MockProject(id=1, name="Work ---")
+    parent = MockTask(
+        id="100",
+        content="Kitchen sink repair",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=1,
+        labels=["next_action"],
+    )
+    waiting_child = MockTask(
+        id="101",
+        content="Wait for callback",
+        project_id="1",
+        section_id=None,
+        parent_id="100",
+        order=1,
+        labels=["waiting"],
+    )
+    actionable_child = MockTask(
+        id="102",
+        content="Research backup plumbers",
+        project_id="1",
+        section_id=None,
+        parent_id="100",
+        order=2,
+        labels=[],
+    )
+
+    client = MockClient([project], [parent, waiting_child, actionable_child])
+    db = _open_test_db(tmp_path)
+    try:
+        engine = LabelingEngine(
+            client=client,
+            db=db,
+            config=Config(api_key="x", label="next_action", blocking_labels=("waiting",)),
+        )
+        changes = engine.run()
+
+        assert changes == 2
+        assert client.queued_updates == {
+            "100": [],
+            "102": ["next_action"],
+        }
+    finally:
+        db.close()
+
+
+def test_blocked_parent_chain_does_not_consume_sequential_slot(tmp_path: Path) -> None:
+    project = MockProject(id=1, name="Work ---")
+    blocked_parent = MockTask(
+        id="100",
+        content="Follow up on sink repair",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=1,
+        labels=[],
+    )
+    waiting_child = MockTask(
+        id="101",
+        content="Wait for callback",
+        project_id="1",
+        section_id=None,
+        parent_id="100",
+        order=1,
+        labels=["waiting"],
+    )
+    next_parent = MockTask(
+        id="200",
+        content="Pay Pikepass",
+        project_id="1",
+        section_id=None,
+        parent_id=None,
+        order=2,
+        labels=[],
+    )
+
+    client = MockClient([project], [blocked_parent, waiting_child, next_parent])
+    db = _open_test_db(tmp_path)
+    try:
+        engine = LabelingEngine(
+            client=client,
+            db=db,
+            config=Config(api_key="x", label="next_action", blocking_labels=("waiting",)),
+        )
+        changes = engine.run()
+
+        assert changes == 1
+        assert client.queued_updates == {"200": ["next_action"]}
+    finally:
+        db.close()
