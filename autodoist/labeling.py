@@ -590,17 +590,20 @@ class LabelingEngine:
             self._label_parentless_task(task, dominant_type, label)
         
         # Handle tasks with children (subtask cascade)
+        cascaded_label = False
         if child_tasks:
-            self._label_task_with_children(
+            cascaded_label = self._label_task_with_children(
                 task, child_tasks, task_type, section_type, project_type, label
             )
         
         # Apply hide_future logic
         self._apply_hide_future(task, child_tasks, label)
         
-        # Mark as first found
+        # Mark as first found only when this branch remains actionable.
         if not self._parentless_found:
-            self._parentless_found = True
+            task_has_label = label in self._get_current_labels(task)
+            if task_has_label or cascaded_label:
+                self._parentless_found = True
     
     def _label_parentless_task(
         self,
@@ -659,7 +662,7 @@ class LabelingEngine:
         section_type: Optional[str],
         project_type: Optional[str],
         label: str
-    ) -> None:
+    ) -> bool:
         """Apply labeling cascade to children."""
         # Determine dominant type for subtask handling
         dominant_type: Optional[str] = None
@@ -681,15 +684,20 @@ class LabelingEngine:
                 dominant_type = task_type
         
         if dominant_type is None:
-            return
+            return False
         
         # Position 2: subtask-level behavior
         subtask_mode = dominant_type[2]
         parent_labels = self._get_current_labels(task)
+        cascaded_label = False
 
         if subtask_mode == 's':
-            # Sequential: label first non-completed child, remove from parent
+            # Sequential: label first non-completed child, remove from parent.
+            # If all children are blocked, parent remains unlabeled.
             labeled_first = False
+            parent_had_label = label in parent_labels
+            if parent_had_label:
+                self._remove_label(task, label)
             for child in child_tasks:
                 if is_header_task(child.content):
                     continue
@@ -702,11 +710,10 @@ class LabelingEngine:
                 # Store parent type for child
                 self.db.set_parent_type(str(child.id), subtask_mode)
                 
-                # Label first child if parent has label
-                if not labeled_first and not child.is_completed and label in parent_labels:
+                # Label first eligible child if parent was previously actionable.
+                if not labeled_first and not child.is_completed and parent_had_label:
                     self._add_label(child, label)
-                    self._remove_label(task, label)
-                    parent_labels = self._get_current_labels(task)
+                    cascaded_label = True
                     labeled_first = True
                     
         elif subtask_mode == 'p':
@@ -726,6 +733,9 @@ class LabelingEngine:
                 
                 if not child.is_completed:
                     self._add_label(child, label)
+                    cascaded_label = True
+
+        return cascaded_label
     
     def _apply_hide_future(
         self,
